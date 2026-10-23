@@ -194,10 +194,6 @@ export function SlideCapabilities() {
                   {item.detail}
                 </div>
               </div>
-              <ArrowUpRight
-                size={15}
-                className="ml-auto shrink-0 text-muted/30 transition-all duration-500 ease-weave group-hover:text-[rgb(var(--copper))]"
-              />
             </div>
           ))}
         </div>

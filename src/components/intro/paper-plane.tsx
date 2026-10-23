@@ -11,9 +11,9 @@ import { motion, useTransform, type MotionValue } from 'framer-motion';
 export function PaperPlane({ progress }: { progress: MotionValue<number> }) {
   const stops = [0, 0.24, 0.48, 0.74, 1];
 
-  const left = useTransform(progress, stops, ['7%', '26%', '44%', '66%', '89%']);
-  const top = useTransform(progress, stops, ['80%', '68%', '52%', '32%', '19%']);
-  const rotate = useTransform(progress, [0, 0.3, 0.62, 1], [-6, 2, 6, -2]);
+  const left = useTransform(progress, stops, ['7%', '28%', '50%', '76%', '90%']);
+  const top = useTransform(progress, stops, ['80%', '84%', '85%', '70%', '16%']);
+  const rotate = useTransform(progress, [0, 0.3, 0.62, 1], [-5, 3, -7, 2]);
   const scale = useTransform(progress, [0, 0.5, 1], [1, 0.82, 0.6]);
   const opacity = useTransform(progress, [0, 0.88, 0.97, 1], [1, 1, 0.55, 0]);
 
@@ -61,7 +61,7 @@ export function FlightPath({ progress }: { progress: MotionValue<number> }) {
       preserveAspectRatio="none"
     >
       <motion.path
-        d="M8 76 C 22 82, 34 66, 47 53 S 72 28, 92 21"
+        d="M7 80 C 30 90, 58 89, 72 66 S 86 33, 90 16"
         fill="none"
         stroke="#5c6b80"
         strokeOpacity="0.28"

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AnimatePresence, motion, useScroll, useTransform } from 'framer-motion';
+import { AnimatePresence, motion, useMotionValue, useSpring } from 'framer-motion';
 import { ArrowRight, LogIn } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { Mark } from '@/components/brand';
@@ -28,11 +28,10 @@ export function IntroExperience() {
   const router = useRouter();
   const { user, hydrate, ready } = useAuth();
 
-  const { scrollXProgress } = useScroll({ container: scrollerRef, axis: 'x' });
-  // Progress is NaN before the container is measured; keep the flight path stable.
-  const flight = useTransform(scrollXProgress, (value) =>
-    Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : 0,
-  );
+  // Flight progress is written by the pager's own scroll handler; the spring
+  // smooths out the difference between snap animation frames.
+  const flightRaw = useMotionValue(0);
+  const flight = useSpring(flightRaw, { stiffness: 220, damping: 32, mass: 0.7 });
 
   useEffect(() => {
     void hydrate();
@@ -104,7 +103,12 @@ export function IntroExperience() {
         }
       });
       setIndex(current);
+      const span = el.scrollWidth - el.clientWidth;
+      flightRaw.set(span > 0 ? Math.min(Math.max(el.scrollLeft / span, 0), 1) : 0);
     };
+
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -126,7 +130,6 @@ export function IntroExperience() {
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
-    el.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('keydown', onKey);
     return () => {
       el.removeEventListener('wheel', onWheel);
