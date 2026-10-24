@@ -21,7 +21,7 @@ type EndpointState = {
 
 export const useEndpoints = create<EndpointState>((set) => ({
   endpoints: EMPTY_ENDPOINTS,
-  health: { text: false, image: false, speech: false },
+  health: { text: false, image: false, speech: false, embedding: false },
   loaded: false,
 
   load: async () => {

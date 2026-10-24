@@ -2,9 +2,14 @@
 
 import { STORES, all, put } from './db';
 
-export type Channel = 'text' | 'image' | 'speech';
+export type Channel = 'text' | 'image' | 'speech' | 'embedding';
 
-export type WireShape = 'openai-chat' | 'openai-image' | 'stability' | 'openai-audio';
+export type WireShape =
+  | 'openai-chat'
+  | 'openai-image'
+  | 'stability'
+  | 'openai-audio'
+  | 'openai-embedding';
 
 export type Endpoint = {
   channel: Channel;
@@ -95,6 +100,30 @@ export const PRESETS: Record<Channel, Preset[]> = {
       shape: 'openai-image',
     },
   ],
+  embedding: [
+    {
+      id: 'dashscope-embedding',
+      label: '通义千问 Embedding',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      models: ['text-embedding-v3', 'text-embedding-v4'],
+      shape: 'openai-embedding',
+      note: '国内直连，1024 维，适合中文作品库',
+    },
+    {
+      id: 'openai-embedding',
+      label: 'OpenAI Embedding',
+      baseUrl: 'https://api.openai.com/v1',
+      models: ['text-embedding-3-small', 'text-embedding-3-large'],
+      shape: 'openai-embedding',
+    },
+    {
+      id: 'custom-embedding',
+      label: '自建 / 兼容端点',
+      baseUrl: '',
+      models: [],
+      shape: 'openai-embedding',
+    },
+  ],
   speech: [
     {
       id: 'openai-audio',
@@ -132,6 +161,16 @@ export const EMPTY_ENDPOINTS: Record<Channel, Endpoint> = {
     apiKey: '',
     model: 'gpt-image-1',
     shape: 'openai-image',
+    updatedAt: 0,
+  },
+  embedding: {
+    channel: 'embedding',
+    preset: 'dashscope-embedding',
+    label: '通义千问 Embedding',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    apiKey: '',
+    model: 'text-embedding-v3',
+    shape: 'openai-embedding',
     updatedAt: 0,
   },
   speech: {

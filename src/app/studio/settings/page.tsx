@@ -16,11 +16,12 @@ import { Input, Select } from '@/components/ui/field';
 import { Segmented, Switch } from '@/components/ui/controls';
 import { Dialog } from '@/components/ui/dialog';
 import { Panel, WorkbenchHeader } from '@/components/studio/workbench';
+import { EnginePanel } from '@/components/studio/engine-panel';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, presetFor, type Channel, type Endpoint } from '@/lib/providers';
-import { streamChat } from '@/lib/api';
+import { probeEndpoint } from '@/lib/api';
 import {
   forget,
   forgetAll,
@@ -36,6 +37,7 @@ import { cn } from '@/lib/cn';
 
 const CHANNELS: Array<{ id: Channel; title: string; note: string }> = [
   { id: 'text', title: '文本', note: 'OpenAI 兼容的 /chat/completions' },
+  { id: 'embedding', title: '嵌入', note: 'OpenAI 兼容的 /embeddings' },
   { id: 'image', title: '图像', note: 'OpenAI Images 或 Stability' },
   { id: 'speech', title: '语音', note: 'Whisper 兼容的 /audio/transcriptions' },
 ];
@@ -117,21 +119,13 @@ export default function SettingsPage() {
       return;
     }
     if (channel !== 'text') {
-      toast('图像与语音端点请在对应工作台实测', 'info');
+      toast('嵌入、图像与语音端点请在对应工作台实测', 'info');
       return;
     }
     setTesting(channel);
     try {
-      let seen = '';
-      await streamChat({
-        endpoint,
-        messages: [{ role: 'user', content: '只回复两个字：可用' }],
-        maxTokens: 12,
-        onDelta: (delta) => {
-          seen += delta;
-        },
-      });
-      if (seen.trim()) toast(`连接正常 · ${seen.trim().slice(0, 12)}`, 'success');
+      const seen = await probeEndpoint(endpoint);
+      if (seen) toast(`连接正常 · ${seen.slice(0, 12)}`, 'success');
       else toast('已连通，但没有返回内容', 'info');
     } catch (error) {
       toast(error instanceof Error ? error.message : '连接失败', 'error');
@@ -182,8 +176,12 @@ export default function SettingsPage() {
       />
 
       <div className="space-y-5">
+        <Panel title="AI 引擎" hint="文本与嵌入分别选择云端或本地，本地权重存于浏览器">
+          <EnginePanel />
+        </Panel>
+
         <Panel title="端点与模型" hint="每个渠道可单独配置，留空即使用服务端默认值">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {CHANNELS.map((channel) => {
               const draft = drafts[channel.id];
               const preset = PRESETS[channel.id].find((item) => item.id === draft.preset);

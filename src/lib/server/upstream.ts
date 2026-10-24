@@ -34,10 +34,17 @@ export function trimBase(base: string): string {
 export type Resolved = { baseUrl: string; apiKey: string; model: string; source: 'client' | 'env' };
 
 export function resolve(
-  channel: 'text' | 'image' | 'speech',
+  channel: 'text' | 'image' | 'speech' | 'embedding',
   body: { baseUrl?: string; apiKey?: string; model?: string },
 ): Resolved | null {
-  const prefix = channel === 'text' ? 'OPENAI' : channel === 'image' ? 'IMAGE' : 'SPEECH';
+  const prefix =
+    channel === 'text'
+      ? 'OPENAI'
+      : channel === 'image'
+        ? 'IMAGE'
+        : channel === 'speech'
+          ? 'SPEECH'
+          : 'EMBED';
   const envBase = process.env[`${prefix}_BASE_URL`] ?? '';
   const envKey = process.env[`${prefix}_API_KEY`] ?? '';
   const envModel = process.env[`${prefix}_MODEL`] ?? '';
