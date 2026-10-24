@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server';
-import { createOpenAI } from '@ai-sdk/openai';
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { assertPublicUrl, jsonError, originAllowed, resolve } from '@/lib/server/upstream';
+import { buildLanguageModel } from '@/lib/server/model';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
         baseUrl?: string;
         apiKey?: string;
         model?: string;
+        wire?: string;
       }
     | null;
 
@@ -79,10 +80,11 @@ export async function POST(request: NextRequest) {
     return jsonError(error instanceof Error ? error.message : '端点不可用', 400);
   }
 
-  const provider = createOpenAI({
-    baseURL: config.baseUrl,
+  const model = buildLanguageModel({
+    baseUrl: config.baseUrl,
     apiKey: config.apiKey,
-    compatibility: 'compatible',
+    model: config.model,
+    wire: body.wire,
   });
 
   const system =
@@ -90,7 +92,7 @@ export async function POST(request: NextRequest) {
     '你是一位中文写作编辑。直接给出可用的文本，不写开场白，不解释创作过程。';
 
   const result = streamText({
-    model: provider(config.model),
+    model,
     system,
     messages,
     temperature: typeof body.temperature === 'number' ? body.temperature : 0.7,

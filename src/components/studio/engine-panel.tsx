@@ -1,17 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Check,
-  Cpu,
-  Download,
-  Loader2,
-  Trash2,
-  TriangleAlert,
-  Zap,
-} from 'lucide-react';
+import { Check, Cpu, Download, Loader2, Plug, Trash2, TriangleAlert, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select } from '@/components/ui/field';
+import { Input, Select } from '@/components/ui/field';
 import { Segmented } from '@/components/ui/controls';
 import { toast } from '@/components/ui/toast';
 import {
@@ -24,6 +16,8 @@ import {
 import { isModelCached, loadModel, removeModel } from '@/lib/local-runtime';
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { useEndpoints } from '@/lib/endpoint-store';
+import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
+import { probeEndpoint } from '@/lib/api';
 import { cn } from '@/lib/cn';
 
 export function EnginePanel() {
@@ -37,6 +31,10 @@ export function EnginePanel() {
   const resetModel = useModelRuntime((state) => state.reset);
 
   const endpoints = useEndpoints((state) => state.endpoints);
+  const storeEndpoint = useEndpoints((state) => state.store);
+
+  const [draft, setDraft] = useState<Endpoint>(endpoints.text);
+  const [testing, setTesting] = useState(false);
   const [cached, setCached] = useState<Record<string, boolean>>({});
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
 
@@ -56,6 +54,45 @@ export function EnginePanel() {
     if (!loaded) return;
     void refresh();
   }, [loaded, prefs, refresh]);
+
+  useEffect(() => {
+    setDraft(endpoints.text);
+  }, [endpoints.text]);
+
+  const applyPreset = (presetId: string) => {
+    const preset = PRESETS.text.find((item) => item.id === presetId);
+    if (!preset) return;
+    setDraft((current) => ({
+      ...current,
+      preset: preset.id,
+      label: preset.label,
+      baseUrl: preset.baseUrl,
+      shape: preset.shape,
+      model: preset.models[0] ?? current.model,
+    }));
+  };
+
+  const saveCloud = async () => {
+    await storeEndpoint(draft);
+    await patch({ textMode: 'api' });
+    toast(`已保存 ${draft.label}`, 'success');
+  };
+
+  const testCloud = async () => {
+    if (!hasKey(draft)) {
+      toast('先填写服务地址与密钥', 'error');
+      return;
+    }
+    setTesting(true);
+    try {
+      const reply = await probeEndpoint(draft);
+      toast(reply ? `连接正常 · ${reply.slice(0, 12)}` : '已连通，但没有返回内容', 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '连接失败', 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const download = async (model: LocalModel) => {
     setModel(model.id, { state: 'downloading', progress: 0, message: undefined });
@@ -84,10 +121,12 @@ export function EnginePanel() {
     toast(removed > 0 ? `已删除 ${removed} 个缓存文件` : '没有找到缓存文件', 'info');
   };
 
+  const preset = PRESETS.text.find((item) => item.id === draft.preset);
   const textReady = cached[prefs.textModelId];
+  const cloudReady = hasKey(draft);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="rounded-xl p-4 shadow-[var(--shadow-inset-sm)]">
           <div className="mb-2 flex items-center gap-2 text-[11.5px] text-muted">
@@ -105,7 +144,9 @@ export function EnginePanel() {
           />
           <p className="mt-3 text-[10.5px] leading-relaxed text-muted/70">
             {prefs.textMode === 'api'
-              ? `走 ${endpoints.text.model || '未配置端点'}，支持工具调用与多步生成。`
+              ? cloudReady
+                ? `走 ${draft.label} · ${draft.model}，支持工具调用与多步生成。`
+                : '尚未填写密钥，选好服务商后填入 Key。'
               : textReady
                 ? '在浏览器内推理，断网可用；不支持工具调用。'
                 : '本地权重尚未下载，去下方下载后可用。'}
@@ -164,6 +205,100 @@ export function EnginePanel() {
         </div>
       </div>
 
+      {prefs.textMode === 'api' ? (
+        <div className="rounded-xl p-4 shadow-[var(--shadow-inset-sm)]">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[11.5px] text-muted">
+              <Plug size={13} />
+              云端 API
+            </div>
+            <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted/55">
+              {draft.shape.replace('-chat', '')}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <label className="mb-1.5 block text-[10.5px] text-muted">服务商</label>
+              <Select
+                value={draft.preset}
+                onChange={(event) => applyPreset(event.target.value)}
+                className="h-9 text-[11.5px]"
+              >
+                {PRESETS.text.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-[10.5px] text-muted">模型</label>
+              {preset && preset.models.length > 0 ? (
+                <Select
+                  value={preset.models.includes(draft.model) ? draft.model : preset.models[0]}
+                  onChange={(event) => setDraft((c) => ({ ...c, model: event.target.value }))}
+                  className="h-9 text-[11.5px]"
+                >
+                  {preset.models.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  value={draft.model}
+                  onChange={(event) => setDraft((c) => ({ ...c, model: event.target.value }))}
+                  placeholder="model-id"
+                  className="h-9 font-mono text-[11px]"
+                  spellCheck={false}
+                />
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-[10.5px] text-muted">API Key</label>
+              <Input
+                type="password"
+                value={draft.apiKey}
+                onChange={(event) => setDraft((c) => ({ ...c, apiKey: event.target.value }))}
+                placeholder={draft.shape === 'anthropic-chat' ? 'sk-ant-...' : 'sk-...'}
+                className="h-9 font-mono text-[11px]"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-[10.5px] text-muted">Base URL</label>
+              <Input
+                value={draft.baseUrl}
+                onChange={(event) => setDraft((c) => ({ ...c, baseUrl: event.target.value }))}
+                placeholder="https://api.example.com/v1"
+                className="h-9 font-mono text-[11px]"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button variant="primary" size="sm" onClick={saveCloud}>
+              <Check size={12} />
+              保存并使用
+            </Button>
+            <Button variant="ghost" size="sm" onClick={testCloud} disabled={testing || !cloudReady}>
+              {testing ? <Loader2 size={11} className="animate-spin" /> : null}
+              测试连接
+            </Button>
+            <span className="text-[10.5px] text-muted/60">
+              密钥只写进本机 IndexedDB，请求经 /api/chat 转发，不落盘。
+            </span>
+          </div>
+        </div>
+      ) : null}
+
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-[12.5px] font-medium text-ink/85">本地模型</h3>
@@ -179,9 +314,22 @@ export function EnginePanel() {
             const ready = cached[model.id];
             const downloading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
+            const active =
+              (model.task === 'text' &&
+                prefs.textMode === 'local' &&
+                prefs.textModelId === model.id) ||
+              (model.task === 'embedding' &&
+                prefs.embeddingMode === 'local' &&
+                prefs.embeddingModelId === model.id);
 
             return (
-              <div key={model.id} className="rounded-xl p-4 shadow-[var(--shadow-inset-sm)]">
+              <div
+                key={model.id}
+                className={cn(
+                  'rounded-xl p-4 shadow-[var(--shadow-inset-sm)]',
+                  active && 'ring-1 ring-[rgb(var(--accent))]/25',
+                )}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -236,14 +384,18 @@ export function EnginePanel() {
                   </div>
                 ) : null}
 
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <Button
                     variant={ready ? 'ghost' : 'primary'}
                     size="sm"
                     onClick={() => download(model)}
                     disabled={downloading}
                   >
-                    {downloading ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                    {downloading ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Download size={11} />
+                    )}
                     {downloading ? '下载中' : ready ? '重新加载' : '下载'}
                   </Button>
                   {ready ? (
@@ -256,8 +408,10 @@ export function EnginePanel() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => void patch({ embeddingMode: 'local', embeddingModelId: model.id })}
-                      className={cn(prefs.embeddingModelId === model.id && prefs.embeddingMode === 'local' && 'text-[rgb(var(--accent))]')}
+                      onClick={() =>
+                        void patch({ embeddingMode: 'local', embeddingModelId: model.id })
+                      }
+                      className={cn(active && 'text-[rgb(var(--accent))]')}
                     >
                       设为当前
                     </Button>
@@ -267,6 +421,7 @@ export function EnginePanel() {
                       variant="ghost"
                       size="sm"
                       onClick={() => void patch({ textMode: 'local', textModelId: model.id })}
+                      className={cn(active && 'text-[rgb(var(--accent))]')}
                     >
                       设为当前
                     </Button>

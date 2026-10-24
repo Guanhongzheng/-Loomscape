@@ -36,7 +36,6 @@ import { relativeTime } from '@/lib/projects';
 import { cn } from '@/lib/cn';
 
 const CHANNELS: Array<{ id: Channel; title: string; note: string }> = [
-  { id: 'text', title: '文本', note: 'OpenAI 兼容的 /chat/completions' },
   { id: 'embedding', title: '嵌入', note: 'OpenAI 兼容的 /embeddings' },
   { id: 'image', title: '图像', note: 'OpenAI Images 或 Stability' },
   { id: 'speech', title: '语音', note: 'Whisper 兼容的 /audio/transcriptions' },
@@ -180,7 +179,7 @@ export default function SettingsPage() {
           <EnginePanel />
         </Panel>
 
-        <Panel title="端点与模型" hint="每个渠道可单独配置，留空即使用服务端默认值">
+        <Panel title="其它端点" hint="文本引擎在上方配置；这里管嵌入、图像与语音">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {CHANNELS.map((channel) => {
               const draft = drafts[channel.id];

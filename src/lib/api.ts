@@ -81,6 +81,7 @@ export async function probeEndpoint(endpoint: Endpoint): Promise<string> {
       baseUrl: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
       model: endpoint.model,
+      wire: endpoint.shape,
     }),
   });
   const data = (await response.json().catch(() => ({}))) as { text?: string; error?: string };

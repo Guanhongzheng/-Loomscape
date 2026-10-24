@@ -6,6 +6,8 @@ export type Channel = 'text' | 'image' | 'speech' | 'embedding';
 
 export type WireShape =
   | 'openai-chat'
+  | 'anthropic-chat'
+  | 'google-chat'
   | 'openai-image'
   | 'stability'
   | 'openai-audio'
@@ -41,31 +43,32 @@ export const PRESETS: Record<Channel, Preset[]> = {
       shape: 'openai-chat',
     },
     {
+      id: 'anthropic',
+      label: 'Anthropic Claude',
+      baseUrl: 'https://api.anthropic.com/v1',
+      models: ['claude-sonnet-4-5', 'claude-3-7-sonnet-latest', 'claude-3-5-haiku-latest'],
+      shape: 'anthropic-chat',
+      note: 'Messages API，支持工具调用',
+    },
+    {
+      id: 'google',
+      label: 'Google Gemini',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+      shape: 'google-chat',
+    },
+    {
+      id: 'zhipu',
+      label: '智谱 AI',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      models: ['glm-4-plus', 'glm-4-air', 'glm-4-flash'],
+      shape: 'openai-chat',
+    },
+    {
       id: 'deepseek',
       label: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com/v1',
       models: ['deepseek-chat', 'deepseek-reasoner'],
-      shape: 'openai-chat',
-    },
-    {
-      id: 'zhipu',
-      label: '智谱 GLM',
-      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-      models: ['glm-4-plus', 'glm-4-air', 'glm-4v-plus'],
-      shape: 'openai-chat',
-    },
-    {
-      id: 'moonshot',
-      label: 'Moonshot',
-      baseUrl: 'https://api.moonshot.cn/v1',
-      models: ['moonshot-v1-32k', 'moonshot-v1-8k'],
-      shape: 'openai-chat',
-    },
-    {
-      id: 'dashscope',
-      label: '通义千问',
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      models: ['qwen-plus', 'qwen-max', 'qwen-vl-plus'],
       shape: 'openai-chat',
     },
     {
@@ -74,7 +77,7 @@ export const PRESETS: Record<Channel, Preset[]> = {
       baseUrl: '',
       models: [],
       shape: 'openai-chat',
-      note: '任何兼容 /chat/completions 的服务都可接入',
+      note: '任何兼容 /chat/completions 的服务',
     },
   ],
   image: [

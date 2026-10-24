@@ -114,6 +114,7 @@ export default function TextWorkbench() {
       baseUrl: endpoints.text.baseUrl,
       apiKey: endpoints.text.apiKey,
       model: endpoints.text.model,
+      wire: endpoints.text.shape,
     }),
     onError: (err) => toast(err.message, 'error'),
   });
