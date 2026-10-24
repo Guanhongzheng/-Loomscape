@@ -45,7 +45,11 @@
 
 **同一时间只驻留一个**。加载第二个会先释放第一个的 ONNX session 与权重引用，再开始加载；连续点几个也只会留下最后一个，因为加载是串行的——两个加载并行时先完成的那个会被后来者悄悄留在内存里。因为一对一，加载文本模型会把嵌入引擎切回哈希，反之亦然。
 
-**WASM 多线程**。线程数取 `hardwareConcurrency - 1`，上限 4（矩阵乘不会线性加速，每个 worker 还要额外内存）。WASM 线程依赖 `SharedArrayBuffer`，而它只在跨源隔离的文档里存在，所以应用对所有路由下发 `Cross-Origin-Opener-Policy: same-origin` 与 `Cross-Origin-Embedder-Policy: credentialless`；`credentialless` 而不是 `require-corp`，是为了让工作台里的远程图片不需要额外 CORP 头。代理把这些头丢掉时线程数会回落到 1，面板里会注明原因。
+**WASM 多线程**。嵌入模型取 `hardwareConcurrency - 1`、上限 4；文本模型上限 **2**——解码要一直持有 KV cache 和每线程的 arena，4 线程换来的速度抵不上多出来的内存。WASM 线程依赖 `SharedArrayBuffer`，而它只在跨源隔离的文档里存在，所以应用对所有路由下发 `Cross-Origin-Opener-Policy: same-origin` 与 `Cross-Origin-Embedder-Policy: credentialless`；`credentialless` 而不是 `require-corp`，是为了让工作台里的远程图片不需要额外 CORP 头。代理把这些头丢掉时线程数会回落到 1，面板里会注明原因。
+
+**内存**。会话创建时关掉 `enableCpuMemArena` 与 `enableMemPattern`：这两项默认开启，会按图的峰值预分配 planner，正是把标签页推向 4GB 上限的主要原因。实测（0.5B/int8、2 线程）加载后渲染进程约 2.4GB，空闲页约 0.16GB。
+
+`unloadModel()` 会 `dispose()` 掉 ONNX 会话，但 **WebAssembly 的线性内存无法缩回**，卸载只能释放约 600MB，剩下要等标签页刷新或丢弃才归还系统。所以面板在卸载后会直接说明这一点，并给一个「刷新页面」按钮；设备内存 ≤ 4GB 时也不会在进入工作台时自动加载文本模型，避免一进页面就顶到上限。
 
 后端策略：默认走 **WASM + 量化权重**，体积最小、兼容性最好。选择 **WebGPU** 会改用 fp32 权重（约为量化的 4 倍体积）换取更快的推理；浏览器没有适配器时自动回落到 WASM。
 
@@ -157,7 +161,8 @@ src/
 - 加载状态只活在当前页面：刷新后模型从内存释放，需要在设置里重新点「加载」（权重仍在缓存，不用重新下载）。
 - 只驻留一个本地模型，所以「本地文本 + 本地嵌入」不能同时开；换一个会顶掉另一个。
 - 跨源隔离要求反向代理保留 COOP/COEP 响应头，否则 WASM 退化为单线程（功能不受影响，只是慢）。
-- 本地文本模型（0.5B/int8）在 4 线程 WASM 上约 10–20 token/s，适合短句与开场；单次上限 240 token，长文请用云端。本地模式不支持工具调用。
+- 本地文本模型（0.5B/int8、2 线程）约 10–20 token/s，适合短句与开场；单次上限 240 token，长文请用云端。本地模式不支持工具调用。
+- 端侧会话的峰值内存约 2.4GB，且卸载后不会立刻归还（WASM 内存不能收缩）；低内存设备请谨慎加载，必要时刷新页面。
 - 实时消息走 BroadcastChannel，限定同一设备的多个标签页。跨设备需要把 `social.ts` 的传输层换成 WebSocket。
 - 对话记录只存在于当前标签页；刷新即清空，记忆与作品库不受影响。
 - 哈希嵌入只看字面重合，问法与资料用词差得远时会检索不到；换成 BGE 才有语义召回。
