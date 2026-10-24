@@ -1,28 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useChat } from '@ai-sdk/react';
+import type { Message } from 'ai';
 import { Check, Copy, Loader2, RotateCcw, Save, Square, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/field';
+import { Select, Textarea } from '@/components/ui/field';
 import { Segmented, Slider, Switch } from '@/components/ui/controls';
 import { ChannelBadge, EmptyState, Panel, WorkbenchHeader } from '@/components/studio/workbench';
 import { RichText } from '@/components/studio/rich-text';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
-import { streamChat } from '@/lib/api';
-import { draftToText, offlineDraft, type Tone } from '@/lib/demo';
+import { useEngines, findModel, LOCAL_TEXT } from '@/lib/engines';
+import { streamLocal } from '@/lib/local-runtime';
+import { offlineDraft, draftToText, type Tone } from '@/lib/demo';
 import { memoryContext, readMemoryPrefs, recall, remember, setMemoryPrefs } from '@/lib/memory';
 import { listProjects, relativeTime, saveProject, type Project } from '@/lib/projects';
-
-type Turn = {
-  id: string;
-  brief: string;
-  text: string;
-  mode: 'live' | 'offline';
-  hits: number;
-  at: number;
-};
+import { cn } from '@/lib/cn';
 
 const TONES: Tone[] = ['克制', '明亮', '锋利'];
 
@@ -34,7 +29,51 @@ const SEEDS = [
 
 const SYSTEM_PROMPT =
   '你是一位中文写作编辑。直接给出可用的文本，不写开场白，不解释创作过程，不复述要求。' +
-  '按用户给出的题材与语气写作，段落之间留空行；需要结构时用二级标题，不要使用多余修辞。';
+  '按用户给出的题材与语气写作，段落之间留空行；需要结构时用二级标题，不要使用多余修辞。' +
+  '当需要确认语气规则、篇幅或标题备选时，可以调用提供的工具。';
+
+type LocalTurn = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  at: number;
+  mode?: 'local' | 'offline';
+};
+
+function textOf(message: Message): string {
+  const fromParts = (message.parts ?? [])
+    .filter((part) => part.type === 'text')
+    .map((part) => (part as { text: string }).text)
+    .join('');
+  return fromParts || message.content || '';
+}
+
+function Tools({ message }: { message: Message }) {
+  const calls = (message.parts ?? []).filter((part) => part.type === 'tool-invocation');
+  if (!calls.length) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap gap-1.5">
+      {calls.map((part) => {
+        const invocation = (
+          part as { toolInvocation: { toolCallId: string; toolName: string; state: string } }
+        ).toolInvocation;
+        return (
+          <span
+            key={invocation.toolCallId}
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[9.5px] tracking-wide text-muted shadow-[var(--shadow-inset-sm)]"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--copper))]/70" />
+            {invocation.toolName}
+            <span className="text-muted/60">
+              {invocation.state === 'result' ? 'done' : 'running'}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function TextWorkbench() {
   const { user } = useAuth();
@@ -42,24 +81,47 @@ export default function TextWorkbench() {
   const health = useEndpoints((state) => state.health);
   const live = channelReady({ endpoints, health }, 'text');
 
+  const prefs = useEngines((state) => state.prefs);
+  const patchEngines = useEngines((state) => state.patch);
+  const loadEngines = useEngines((state) => state.load);
+
   const [brief, setBrief] = useState('');
   const [tone, setTone] = useState<Tone>('克制');
   const [length, setLength] = useState(60);
   const [memoryOn, setMemoryOn] = useState(true);
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [saved, setSaved] = useState<Project[]>([]);
+  const [localTurns, setLocalTurns] = useState<LocalTurn[]>([]);
+  const [localBusy, setLocalBusy] = useState(false);
+  const [hits, setHits] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
-  const cancelledRef = useRef(false);
-  const timerRef = useRef<number | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const owner = user?.id ?? 'local';
+  const localMode = prefs.textMode === 'local';
+  const localModel = findModel(prefs.textModelId);
+  const system = useMemo(() => SYSTEM_PROMPT, []);
+
+  const { messages, append, reload, stop, status, setMessages, error } = useChat({
+    api: '/api/chat',
+    maxSteps: 3,
+    experimental_prepareRequestBody: ({ messages: current }) => ({
+      messages: current,
+      system,
+      temperature: tone === '锋利' ? 0.9 : tone === '明亮' ? 0.8 : 0.6,
+      maxTokens: Math.round(360 + length * 16),
+      baseUrl: endpoints.text.baseUrl,
+      apiKey: endpoints.text.apiKey,
+      model: endpoints.text.model,
+    }),
+    onError: (err) => toast(err.message, 'error'),
+  });
 
   useEffect(() => {
-    readMemoryPrefs().then((prefs) => setMemoryOn(prefs.enabled));
-  }, []);
+    void loadEngines();
+    void readMemoryPrefs().then((value) => setMemoryOn(value.enabled));
+  }, [loadEngines]);
 
   useEffect(() => {
     if (!user) return;
@@ -68,138 +130,122 @@ export default function TextWorkbench() {
       .catch(() => setSaved([]));
   }, [user]);
 
-  useEffect(
-    () => () => {
-      cancelledRef.current = true;
-      abortRef.current?.abort();
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-    },
-    [],
-  );
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, localTurns.length]);
 
-  const patchTurn = (id: string, text: string) => {
-    setTurns((rows) => rows.map((row) => (row.id === id ? { ...row, text } : row)));
-  };
+  useEffect(() => () => abortRef.current?.abort(), []);
 
-  const stop = () => {
-    cancelledRef.current = true;
-    abortRef.current?.abort();
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    setBusy(false);
-  };
+  const busy = localMode ? localBusy : status === 'submitted' || status === 'streaming';
 
-  const typeOut = (id: string, full: string) =>
-    new Promise<void>((resolve) => {
-      let cursor = 0;
-      const step = () => {
-        if (cancelledRef.current) {
-          resolve();
-          return;
-        }
-        cursor = Math.min(full.length, cursor + 3 + Math.floor(Math.random() * 5));
-        patchTurn(id, full.slice(0, cursor));
-        if (cursor < full.length) {
-          timerRef.current = window.setTimeout(step, 14);
-        } else {
-          resolve();
-        }
-      };
-      step();
-    });
-
-  const generate = async (override?: string) => {
-    const text = (override ?? brief).trim();
+  const generate = async () => {
+    const text = brief.trim();
     if (!text) {
       toast('先写一句提纲', 'error');
       return;
     }
     if (busy) return;
 
-    setBusy(true);
-    cancelledRef.current = false;
+    const recalled = memoryOn ? await recall(text, owner, 4) : [];
+    setHits(recalled.length);
+    const context = memoryContext(recalled);
+    const prompt = `${text}\n\n语气：${tone}。篇幅约 ${length * 6} 字。`;
 
-    const id = `turn_${Date.now()}`;
-    const hits = memoryOn ? await recall(text, owner, 4) : [];
-    const turn: Turn = {
-      id,
-      brief: text,
-      text: '',
-      mode: live ? 'live' : 'offline',
-      hits: hits.length,
-      at: Date.now(),
-    };
-    setTurns((rows) => [...rows, turn]);
-
-    if (live) {
+    if (localMode) {
+      const model = localModel;
+      if (!model) {
+        toast('先在设置里下载一个本地模型', 'error');
+        return;
+      }
+      const id = `local_${Date.now()}`;
+      const answerId = `${id}_a`;
+      setLocalTurns((rows) => [
+        ...rows,
+        { id, role: 'user', text, at: Date.now() },
+        { id: answerId, role: 'assistant', text: '', at: Date.now(), mode: 'local' },
+      ]);
+      setLocalBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
-      const context = memoryContext(hits);
-      const history = turns.slice(-2).flatMap((row) => [
-        { role: 'user' as const, content: row.brief },
-        { role: 'assistant' as const, content: row.text },
-      ]);
 
       let produced = '';
       try {
-        await streamChat({
-          endpoint: endpoints.text,
-          messages: [
-            { role: 'system', content: context ? `${SYSTEM_PROMPT}\n\n${context}` : SYSTEM_PROMPT },
-            ...history,
-            { role: 'user', content: `${text}\n\n语气：${tone}。篇幅约 ${length * 6} 字。` },
-          ],
+        await streamLocal({
+          model,
+          source: prefs.source,
+          backendPreference: prefs.backend,
+          system: context ? `${system}\n\n${context}` : system,
+          turns: [{ role: 'user', content: prompt }],
+          maxTokens: Math.round(160 + length * 6),
           temperature: tone === '锋利' ? 0.9 : tone === '明亮' ? 0.8 : 0.6,
-          maxTokens: Math.round(360 + length * 16),
           signal: controller.signal,
-          onDelta: (delta) => {
-            produced += delta;
-            patchTurn(id, produced);
+          onToken: (chunk) => {
+            produced += chunk;
+            setLocalTurns((rows) =>
+              rows.map((row) => (row.id === answerId ? { ...row, text: produced } : row)),
+            );
           },
         });
-      } catch (error) {
-        if (!cancelledRef.current) {
-          const message = error instanceof Error ? error.message : '生成失败';
-          toast(message, 'error');
-          setTurns((rows) => rows.filter((row) => row.id !== id));
+        if (produced.trim()) {
+          void remember({
+            owner,
+            kind: 'text',
+            text: `${text}（${tone}）`,
+            tags: ['text', tone, 'local'],
+          });
         }
-        setBusy(false);
-        return;
+      } catch (err) {
+        toast(err instanceof Error ? err.message : '本地生成失败', 'error');
+      } finally {
+        setLocalBusy(false);
       }
-
-      if (produced.trim()) {
-        void remember({ owner, kind: 'text', text: `${text}（${tone}）`, tags: ['text', tone] });
-      }
-      setBusy(false);
       return;
     }
 
-    const draft = offlineDraft(text, tone);
-    await typeOut(id, draftToText(draft));
-    if (!cancelledRef.current) {
+    if (!live) {
+      const draft = offlineDraft(text, tone);
+      const id = `off_${Date.now()}`;
+      setLocalTurns((rows) => [
+        ...rows,
+        { id, role: 'user', text, at: Date.now() },
+        { id: `${id}_a`, role: 'assistant', text: draftToText(draft), at: Date.now(), mode: 'offline' },
+      ]);
       void remember({ owner, kind: 'text', text: `${text}（${tone}）`, tags: ['text', tone, 'offline'] });
+      return;
     }
-    setBusy(false);
+
+    await append({ role: 'user', content: prompt });
+    void remember({ owner, kind: 'text', text: `${text}（${tone}）`, tags: ['text', tone] });
   };
 
-  const copy = async (turn: Turn) => {
+  const cancel = () => {
+    abortRef.current?.abort();
+    stop();
+    setLocalBusy(false);
+  };
+
+  const latestAssistant = [...messages].reverse().find((message) => message.role === 'assistant');
+  const latestText = latestAssistant ? textOf(latestAssistant) : '';
+
+  const copy = async (id: string, text: string) => {
     try {
-      await navigator.clipboard.writeText(turn.text);
-      setCopied(turn.id);
+      await navigator.clipboard.writeText(text);
+      setCopied(id);
       window.setTimeout(() => setCopied(null), 1600);
     } catch {
       toast('无法访问剪贴板', 'error');
     }
   };
 
-  const keep = async (turn: Turn) => {
-    if (!user) return;
+  const keep = async (id: string, prompt: string, text: string) => {
+    if (!user || !text.trim()) return;
     try {
       const record = await saveProject({
         owner: user.id,
         kind: 'text',
-        title: turn.brief,
-        summary: turn.text.replace(/\n+/g, ' ').slice(0, 120),
-        payload: { brief: turn.brief, text: turn.text, tone, mode: turn.mode },
+        title: prompt,
+        summary: text.replace(/\n+/g, ' ').slice(0, 120),
+        payload: { brief: prompt, text, tone, mode: localMode ? 'local' : 'api' },
       });
       setSaved((rows) => [record, ...rows].slice(0, 4));
       toast('已存入作品库', 'success');
@@ -208,20 +254,40 @@ export default function TextWorkbench() {
     }
   };
 
+  const engineValue = prefs.textMode === 'local' ? prefs.textModelId : 'api';
+
+  const turns: Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    text: string;
+    at: number;
+    tools?: Message;
+    mode?: 'local' | 'offline';
+  }> =
+    localMode || localTurns.length
+      ? localTurns
+      : messages.map((message) => ({
+          id: message.id,
+          role: message.role === 'assistant' ? 'assistant' : 'user',
+          text: textOf(message),
+          at: (message.createdAt ?? new Date()).getTime(),
+          tools: message.role === 'assistant' ? message : undefined,
+        }));
+
   return (
     <div>
       <WorkbenchHeader
         index="01"
         title="文本创作台"
-        description="给出提纲与语气，逐句生成。连接服务时走流式输出，未连接时给出结构草案，生成过程都可中断。"
+        description="给出提纲与语气，逐句生成。云端走 AI SDK 流式与工具调用，本地模型在浏览器内推理，两者都可中断。"
         actions={<ChannelBadge channel="text" />}
       />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,336px)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
         <div className="space-y-5">
           <Panel title="提纲" hint="一句话说明写什么、给谁看">
             <Textarea
-              rows={6}
+              rows={4}
               value={brief}
               onChange={(event) => setBrief(event.target.value)}
               placeholder="例如：为一家只在夜里营业的书店写一段开业预告，语气克制。"
@@ -236,12 +302,32 @@ export default function TextWorkbench() {
                   onClick={() => setBrief(seed)}
                   className="rounded-full bg-[rgb(var(--surface))] px-2.5 py-1 text-[10.5px] text-muted shadow-[var(--shadow-neu-sm)] transition-colors hover:text-ink"
                 >
-                  {seed.slice(0, 14)}…
+                  {seed.slice(0, 9)}…
                 </button>
               ))}
             </div>
 
-            <div className="mt-5 space-y-5">
+            <div className="mt-4 space-y-3.5">
+              <div>
+                <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">引擎</div>
+                <Select
+                  value={engineValue}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === 'api') void patchEngines({ textMode: 'api' });
+                    else void patchEngines({ textMode: 'local', textModelId: value });
+                  }}
+                  className="h-10 text-[12px]"
+                >
+                  <option value="api">云端 · {endpoints.text.model || '未配置'}</option>
+                  {LOCAL_TEXT.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      本地 · {model.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
               <div>
                 <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">语气</div>
                 <Segmented
@@ -272,14 +358,14 @@ export default function TextWorkbench() {
               />
             </div>
 
-            <div className="mt-6 flex gap-2">
+            <div className="mt-5 flex gap-2">
               {busy ? (
-                <Button variant="inset" size="md" className="flex-1" onClick={stop}>
+                <Button variant="inset" size="md" className="flex-1" onClick={cancel}>
                   <Square size={13} />
                   停止
                 </Button>
               ) : (
-                <Button variant="primary" size="md" className="flex-1" onClick={() => generate()}>
+                <Button variant="primary" size="md" className="flex-1" onClick={generate}>
                   <Wand2 size={14} strokeWidth={1.8} />
                   开始起草
                 </Button>
@@ -287,10 +373,17 @@ export default function TextWorkbench() {
             </div>
 
             <p className="mt-3 text-[10.5px] leading-relaxed text-muted/70">
-              {live
-                ? `经由 ${endpoints.text.model} 生成，密钥仅存在于本机。`
-                : '未配置文本端点：本次输出为离线结构草案，不是模型生成结果。'}
+              {localMode
+                ? `在浏览器内运行 ${localModel?.label ?? '本地模型'}，权重已缓存，首次推理需要加载 10–20 秒。`
+                : live
+                  ? `经由 ${endpoints.text.model} 生成。工具：style_guide / measure / title_variants。`
+                  : '未配置文本端点：本次输出为离线结构草案，不是模型生成结果。'}
             </p>
+            {hits > 0 ? (
+              <p className="mt-1 font-mono text-[10px] text-[rgb(var(--copper))]/80">
+                已召回 {hits} 条记忆
+              </p>
+            ) : null}
           </Panel>
 
           <Panel title="作品库" hint="最近保存的文本">
@@ -305,15 +398,9 @@ export default function TextWorkbench() {
                       onClick={() => {
                         const body = (item.payload as { text?: string }).text ?? '';
                         setBrief(item.title);
-                        setTurns([
-                          {
-                            id: `turn_${Date.now()}`,
-                            brief: item.title,
-                            text: body,
-                            mode: 'live',
-                            hits: 0,
-                            at: item.updatedAt,
-                          },
+                        setLocalTurns([
+                          { id: 'loaded_u', role: 'user', text: item.title, at: item.updatedAt },
+                          { id: 'loaded_a', role: 'assistant', text: body, at: item.updatedAt },
                         ]);
                       }}
                       className="group w-full text-left"
@@ -336,12 +423,15 @@ export default function TextWorkbench() {
           className="flex min-h-[560px] flex-col"
           bodyClassName="flex min-h-0 flex-1 flex-col p-0"
           title="输出"
-          hint={turns.length ? `${turns.length} 段草稿` : '尚未开始'}
+          hint={turns.length ? `${turns.length} 段` : '尚未开始'}
           action={
             turns.length ? (
               <button
                 type="button"
-                onClick={() => setTurns([])}
+                onClick={() => {
+                  setMessages([]);
+                  setLocalTurns([]);
+                }}
                 className="text-[11px] text-muted transition-colors hover:text-ink"
               >
                 清空
@@ -359,72 +449,81 @@ export default function TextWorkbench() {
               <div className="space-y-7">
                 {turns.map((turn) => (
                   <article key={turn.id}>
-                    <div className="flex items-start gap-3">
-                      <span className="mt-[3px] font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
-                        {new Date(turn.at).toLocaleTimeString('zh-CN', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                      <p className="flex-1 text-[12.5px] leading-relaxed text-muted">{turn.brief}</p>
-                    </div>
+                    {turn.role === 'user' ? (
+                      <div className="flex items-start gap-3">
+                        <span className="mt-[3px] font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
+                          {new Date(turn.at).toLocaleTimeString('zh-CN', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                        <p className="flex-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted">
+                          {turn.text}
+                        </p>
+                      </div>
+                    ) : null}
 
-                    <div className="mt-4 rounded-2xl bg-[rgb(var(--surface))]/70 px-5 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
-                      {turn.text ? (
-                        <RichText text={turn.text} />
-                      ) : (
-                        <div className="space-y-2.5 py-1">
-                          <div className="skeleton h-3 w-[86%] rounded-full" />
-                          <div className="skeleton h-3 w-[72%] rounded-full" />
-                          <div className="skeleton h-3 w-[79%] rounded-full" />
+                    {turn.role === 'assistant' ? (
+                      <>
+                        <div className="mt-4 rounded-2xl bg-[rgb(var(--surface))]/70 px-5 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+                          {turn.text ? (
+                            <RichText text={turn.text} />
+                          ) : (
+                            <div className="space-y-2.5 py-1">
+                              <div className="skeleton h-3 w-[86%] rounded-full" />
+                              <div className="skeleton h-3 w-[72%] rounded-full" />
+                              <div className="skeleton h-3 w-[79%] rounded-full" />
+                            </div>
+                          )}
                         </div>
-                      )}
 
-                      {busy && turn.id === turns[turns.length - 1]?.id ? (
-                        <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-[rgb(var(--accent))]/70 align-middle" />
-                      ) : null}
-                    </div>
+                        {turn.tools ? <Tools message={turn.tools} /> : null}
 
-                    <div className="mt-3 flex items-center gap-1">
-                      <span className="mr-auto flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/50">
-                        {turn.mode === 'live' ? 'stream' : 'offline draft'}
-                        {turn.hits > 0 ? ` · 记忆 ${turn.hits}` : ''}
-                      </span>
+                        <div className="mt-3 flex items-center gap-1">
+                          <span className="mr-auto font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/50">
+                            {turn.mode === 'offline'
+                              ? 'offline draft'
+                              : turn.mode === 'local'
+                                ? 'local runtime'
+                                : 'ai sdk stream'}
+                          </span>
 
-                      <button
-                        type="button"
-                        onClick={() => copy(turn)}
-                        className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
-                      >
-                        {copied === turn.id ? <Check size={12} /> : <Copy size={12} />}
-                        {copied === turn.id ? '已复制' : '复制'}
-                      </button>
+                          <button
+                            type="button"
+                            onClick={() => copy(turn.id, turn.text)}
+                            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                          >
+                            {copied === turn.id ? <Check size={12} /> : <Copy size={12} />}
+                            {copied === turn.id ? '已复制' : '复制'}
+                          </button>
 
-                      {turn.text ? (
-                        <button
-                          type="button"
-                          onClick={() => keep(turn)}
-                          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
-                        >
-                          <Save size={12} />
-                          保存
-                        </button>
-                      ) : null}
+                          {turn.text ? (
+                            <button
+                              type="button"
+                              onClick={() => keep(turn.id, brief, turn.text)}
+                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                            >
+                              <Save size={12} />
+                              保存
+                            </button>
+                          ) : null}
 
-                      {!busy && turn.text ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setBrief(turn.brief);
-                            void generate(turn.brief);
-                          }}
-                          className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
-                        >
-                          <RotateCcw size={12} />
-                          重写
-                        </button>
-                      ) : null}
-                    </div>
+                          {!busy && latestText ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (localMode) void generate();
+                                else void reload();
+                              }}
+                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                            >
+                              <RotateCcw size={12} />
+                              重写
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
+                    ) : null}
                   </article>
                 ))}
 
@@ -434,6 +533,14 @@ export default function TextWorkbench() {
                     正在生成，可随时停止
                   </div>
                 ) : null}
+
+                {error ? (
+                  <p className="rounded-lg bg-[#f3e2df] px-3 py-2 text-[11.5px] text-[#8c3b32]">
+                    {error.message}
+                  </p>
+                ) : null}
+
+                <div ref={bottomRef} />
               </div>
             )}
           </div>
