@@ -137,7 +137,7 @@ export default function ImageWorkbench() {
   return (
     <div>
       <WorkbenchHeader
-        index="02"
+        index="03"
         title="图像创作台"
         description="一次描述，按比例出图。连接图像服务时走远端生成；未连接时用程序化构图给出可直接使用的占位画面。"
         actions={<ChannelBadge channel="image" />}

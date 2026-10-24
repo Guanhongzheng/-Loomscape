@@ -151,7 +151,7 @@ export default function SocialWorkbench() {
   return (
     <div>
       <WorkbenchHeader
-        index="06"
+        index="07"
         title="协作与社交"
         description="用 UID 建立通讯录，在群组里发消息。当前构建的实时链路走浏览器广播通道，同一设备的多个标签页即可互相收发。"
         actions={

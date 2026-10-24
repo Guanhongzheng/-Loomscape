@@ -106,7 +106,7 @@ export default function StoryWorkbench() {
   return (
     <div>
       <WorkbenchHeader
-        index="05"
+        index="06"
         title="多模态故事"
         description="把文字与画面排成分镜。每格可以挂一张归档画面，导出成 Markdown 或存为作品。"
         actions={

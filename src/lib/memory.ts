@@ -7,8 +7,16 @@ import { embedTexts, isModelCached } from './local-runtime';
 import { requestEmbeddings } from './api';
 import { useEndpoints } from './endpoint-store';
 import { hasKey } from './providers';
+import { chunkText, type RagSource } from './rag';
 
-export type MemoryKind = 'text' | 'image' | 'voice' | 'video' | 'story' | 'note';
+export type MemoryKind = 'text' | 'image' | 'voice' | 'video' | 'story' | 'note' | 'doc';
+
+export type MemorySource = {
+  docId: string;
+  docTitle: string;
+  chunk: number;
+  total: number;
+};
 
 export type MemoryRecord = {
   id: string;
@@ -19,6 +27,8 @@ export type MemoryRecord = {
   embedder: string;
   tags: string[];
   createdAt: number;
+  /** Present when the record is one chunk of an ingested document. */
+  source?: MemorySource;
 };
 
 const HASH_DIM = 192;
@@ -194,9 +204,28 @@ export async function remember(input: {
 
 export type RecallHit = { record: MemoryRecord; score: number };
 
-export async function recall(query: string, owner: string, topK = 4): Promise<RecallHit[]> {
+export type RetrieveOptions = {
+  topK?: number;
+  minScore?: number;
+  kinds?: MemoryKind[];
+};
+
+/**
+ * Vector search over the local memory store. The query and the stored rows
+ * must share an embedder tag: comparing a hash vector with a BGE vector would
+ * produce a meaningless cosine, so mismatched rows are dropped rather than
+ * scored.
+ */
+export async function retrieve(
+  query: string,
+  owner: string,
+  options: RetrieveOptions = {},
+): Promise<RecallHit[]> {
   const { enabled, depth } = await readMemoryPrefs();
   if (!enabled || !query.trim()) return [];
+
+  const topK = options.topK ?? 4;
+  const minScore = options.minScore ?? 0.12;
 
   let rows: MemoryRecord[] = [];
   try {
@@ -208,6 +237,7 @@ export async function recall(query: string, owner: string, topK = 4): Promise<Re
   const embedder = await activeEmbedder();
   const pool = rows
     .filter((row) => row.owner === owner && row.embedder === embedder.tag)
+    .filter((row) => !options.kinds || options.kinds.includes(row.kind))
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, DEPTH_LIMIT[depth]);
 
@@ -216,9 +246,107 @@ export async function recall(query: string, owner: string, topK = 4): Promise<Re
   const [probe] = await vectorize([query], embedder);
   return pool
     .map((record) => ({ record, score: cosine(probe, record.vector) }))
-    .filter((hit) => hit.score > 0.12)
+    .filter((hit) => hit.score > minScore)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
+}
+
+export function recall(query: string, owner: string, topK = 4): Promise<RecallHit[]> {
+  return retrieve(query, owner, { topK });
+}
+
+export type DocumentSummary = {
+  docId: string;
+  title: string;
+  chunks: number;
+  chars: number;
+  createdAt: number;
+};
+
+/** Guards against a paste of several megabytes turning into thousands of rows. */
+const MAX_CHUNKS = 240;
+
+export async function rememberDocument(input: {
+  owner: string;
+  title: string;
+  text: string;
+}): Promise<DocumentSummary> {
+  const body = input.text.trim();
+  if (body.length < 20) throw new Error('内容太短，至少需要 20 个字');
+
+  const chunks = chunkText(body);
+  if (!chunks.length) throw new Error('没有可入库的内容');
+  if (chunks.length > MAX_CHUNKS) {
+    throw new Error(`文档过长（${chunks.length} 段，上限 ${MAX_CHUNKS} 段），请拆分后再入库`);
+  }
+
+  const selected = await activeEmbedder();
+  const vectors = await vectorize(
+    chunks.map((chunk) => chunk.text),
+    selected,
+  );
+
+  // A short batch means the encoder failed partway. Mixing hash vectors under
+  // a model tag would put two vector spaces in one index, so fall back whole.
+  const embedder: EmbedderInfo =
+    vectors.length === chunks.length
+      ? selected
+      : { tag: 'hash', label: '哈希（嵌入失败后的回退）', dims: HASH_DIM };
+  const vectorsFinal =
+    vectors.length === chunks.length ? vectors : chunks.map((chunk) => hashEmbed(chunk.text));
+
+  const docId = opaqueId('doc');
+  const title = input.title.trim().slice(0, 80) || `未命名资料 ${new Date().toLocaleDateString('zh-CN')}`;
+  const now = Date.now();
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    const record: MemoryRecord = {
+      id: opaqueId('mem'),
+      owner: input.owner,
+      kind: 'doc',
+      text: chunk.text.slice(0, 1200),
+      vector: vectorsFinal[index] ?? hashEmbed(chunk.text),
+      embedder: embedder.tag,
+      tags: ['rag', title],
+      createdAt: now + index,
+      source: { docId, docTitle: title, chunk: chunk.index, total: chunks.length },
+    };
+    await put(STORES.memories, record);
+  }
+
+  return { docId, title, chunks: chunks.length, chars: body.length, createdAt: now };
+}
+
+export async function listDocuments(owner: string): Promise<DocumentSummary[]> {
+  const rows = await listMemories(owner);
+  const grouped = new Map<string, DocumentSummary>();
+
+  for (const row of rows) {
+    if (!row.source) continue;
+    const existing = grouped.get(row.source.docId);
+    if (existing) {
+      existing.chunks += 1;
+      existing.chars += row.text.length;
+    } else {
+      grouped.set(row.source.docId, {
+        docId: row.source.docId,
+        title: row.source.docTitle,
+        chunks: 1,
+        chars: row.text.length,
+        createdAt: row.createdAt,
+      });
+    }
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function forgetDocument(owner: string, docId: string): Promise<void> {
+  const rows = await listMemories(owner);
+  await Promise.all(
+    rows.filter((row) => row.source?.docId === docId).map((row) => remove(STORES.memories, row.id)),
+  );
 }
 
 export async function listMemories(owner: string): Promise<MemoryRecord[]> {
@@ -244,4 +372,16 @@ export function memoryContext(hits: RecallHit[]): string {
   if (!hits.length) return '';
   const lines = hits.map((hit, index) => `${index + 1}. [${hit.record.kind}] ${hit.record.text}`);
   return ['以下是这个人过去留下的偏好与上下文，保持连贯但不要生硬复述：', ...lines].join('\n');
+}
+
+/** Adapts retrieval hits to the numbered form the prompt builder expects. */
+export function toRagSources(hits: RecallHit[]): RagSource[] {
+  return hits.map((hit, index) => ({
+    order: index + 1,
+    text: hit.record.text,
+    title: hit.record.source?.docTitle,
+    chunk: hit.record.source?.chunk,
+    total: hit.record.source?.total,
+    score: hit.score,
+  }));
 }

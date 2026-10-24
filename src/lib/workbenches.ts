@@ -3,6 +3,8 @@ import {
   BookOpen,
   Clapperboard,
   Frame,
+  LayoutGrid,
+  MessagesSquare,
   PenLine,
   Settings2,
   Users,
@@ -30,8 +32,17 @@ export const WORKBENCHES: WorkbenchTile[] = [
     span: 'lg:col-span-2',
   },
   {
-    href: '/studio/image',
+    href: '/studio/chat',
     index: '02',
+    title: '对话',
+    desc: '多轮流式问答，先检索知识库再作答，引用逐条可查。',
+    meta: 'stream · rag · citation',
+    icon: MessagesSquare,
+    span: 'lg:col-span-2',
+  },
+  {
+    href: '/studio/image',
+    index: '03',
     title: '图像',
     desc: '提示词、比例、批量。未连接服务时给出程序化构图。',
     meta: 'prompt · batch · archive',
@@ -40,7 +51,7 @@ export const WORKBENCHES: WorkbenchTile[] = [
   },
   {
     href: '/studio/video',
-    index: '03',
+    index: '04',
     title: '影像',
     desc: '导入片段，在时间线上裁切、排序、导出工程。',
     meta: 'trim · sequence · edl',
@@ -49,7 +60,7 @@ export const WORKBENCHES: WorkbenchTile[] = [
   },
   {
     href: '/studio/voice',
-    index: '04',
+    index: '05',
     title: '声音',
     desc: '浏览器内录音、波形走查、声音转写与朗读。',
     meta: 'record · waveform · tts',
@@ -58,7 +69,7 @@ export const WORKBENCHES: WorkbenchTile[] = [
   },
   {
     href: '/studio/story',
-    index: '05',
+    index: '06',
     title: '故事',
     desc: '把文字与画面排成分镜，一体导出。',
     meta: 'panel · board · export',
@@ -67,7 +78,7 @@ export const WORKBENCHES: WorkbenchTile[] = [
   },
   {
     href: '/studio/social',
-    index: '06',
+    index: '07',
     title: '社交',
     desc: '用 UID 建立通讯录，同一浏览器多标签实时对话。',
     meta: 'uid · contact · channel',
@@ -76,13 +87,27 @@ export const WORKBENCHES: WorkbenchTile[] = [
   },
   {
     href: '/studio/settings',
-    index: '07',
+    index: '08',
     title: '设置',
-    desc: '端点、模型、引擎与记忆。全部存在本机。',
-    meta: 'endpoint · engine · data',
+    desc: '引擎、端点、密钥与记忆。全部存在本机。',
+    meta: 'engine · endpoint · data',
     icon: Settings2,
     span: '',
   },
+];
+
+/** Dock order: the overview sits first, then the workbenches in sequence. */
+export const DOCK: WorkbenchTile[] = [
+  {
+    href: '/studio',
+    index: '00',
+    title: '总览',
+    desc: '',
+    meta: '',
+    icon: LayoutGrid,
+    span: '',
+  },
+  ...WORKBENCHES,
 ];
 
 export const KIND_LABEL: Record<string, string> = {

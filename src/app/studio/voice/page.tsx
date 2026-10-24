@@ -235,7 +235,7 @@ export default function VoiceWorkbench() {
   return (
     <div>
       <WorkbenchHeader
-        index="04"
+        index="05"
         title="声音工坊"
         description="在本机录音并走查波形，接入语音服务后可直接转写。朗读使用浏览器自带的语音引擎，不产生网络请求。"
         actions={<ChannelBadge channel="speech" />}

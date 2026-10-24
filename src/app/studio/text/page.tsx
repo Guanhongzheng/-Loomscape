@@ -1,21 +1,23 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import type { Message } from 'ai';
 import { Check, Copy, Loader2, RotateCcw, Save, Square, Wand2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select, Textarea } from '@/components/ui/field';
+import { Textarea } from '@/components/ui/field';
 import { Segmented, Slider, Switch } from '@/components/ui/controls';
 import { ChannelBadge, EmptyState, Panel, WorkbenchHeader } from '@/components/studio/workbench';
 import { RichText } from '@/components/studio/rich-text';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
-import { useEngines, findModel, LOCAL_TEXT } from '@/lib/engines';
+import { useEngines, findModel } from '@/lib/engines';
 import { streamLocal } from '@/lib/local-runtime';
 import { offlineDraft, draftToText, type Tone } from '@/lib/demo';
-import { memoryContext, readMemoryPrefs, recall, remember, setMemoryPrefs } from '@/lib/memory';
+import { readMemoryPrefs, remember, retrieve, setMemoryPrefs, toRagSources } from '@/lib/memory';
+import { composeRagContext } from '@/lib/rag';
 import { listProjects, relativeTime, saveProject, type Project } from '@/lib/projects';
 import { cn } from '@/lib/cn';
 
@@ -81,8 +83,8 @@ export default function TextWorkbench() {
   const health = useEndpoints((state) => state.health);
   const live = channelReady({ endpoints, health }, 'text');
 
+  // The engine is chosen in settings; this workbench only reads the result.
   const prefs = useEngines((state) => state.prefs);
-  const patchEngines = useEngines((state) => state.patch);
   const loadEngines = useEngines((state) => state.load);
 
   const [brief, setBrief] = useState('');
@@ -147,9 +149,9 @@ export default function TextWorkbench() {
     }
     if (busy) return;
 
-    const recalled = memoryOn ? await recall(text, owner, 4) : [];
+    const recalled = memoryOn ? await retrieve(text, owner, { topK: 4 }) : [];
     setHits(recalled.length);
-    const context = memoryContext(recalled);
+    const context = composeRagContext(toRagSources(recalled));
     const prompt = `${text}\n\n语气：${tone}。篇幅约 ${length * 6} 字。`;
 
     if (localMode) {
@@ -255,8 +257,6 @@ export default function TextWorkbench() {
     }
   };
 
-  const engineValue = prefs.textMode === 'local' ? prefs.textModelId : 'api';
-
   const turns: Array<{
     id: string;
     role: 'user' | 'assistant';
@@ -309,24 +309,23 @@ export default function TextWorkbench() {
             </div>
 
             <div className="mt-4 space-y-3.5">
-              <div>
-                <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">引擎</div>
-                <Select
-                  value={engineValue}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (value === 'api') void patchEngines({ textMode: 'api' });
-                    else void patchEngines({ textMode: 'local', textModelId: value });
-                  }}
-                  className="h-10 text-[12px]"
-                >
-                  <option value="api">云端 · {endpoints.text.model || '未配置'}</option>
-                  {LOCAL_TEXT.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      本地 · {model.label}
-                    </option>
-                  ))}
-                </Select>
+              <div className="rounded-xl px-3 py-2.5 shadow-[var(--shadow-inset-sm)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-muted">引擎</span>
+                  <Link
+                    href="/studio/settings"
+                    className="text-[10.5px] text-[rgb(var(--copper))]/85 hover:underline"
+                  >
+                    在设置中更换
+                  </Link>
+                </div>
+                <div className="mt-1 text-[12px] text-ink/85">
+                  {localMode
+                    ? `本地 · ${localModel?.label ?? '未选择模型'}`
+                    : live
+                      ? `云端 · ${endpoints.text.model}`
+                      : '云端 · 未配置'}
+                </div>
               </div>
 
               <div>

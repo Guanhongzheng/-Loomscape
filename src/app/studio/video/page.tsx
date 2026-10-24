@@ -159,7 +159,7 @@ export default function VideoWorkbench() {
   return (
     <div>
       <WorkbenchHeader
-        index="03"
+        index="04"
         title="影像编辑台"
         description="导入一条源片，在时间线上裁切与排序，导出可复用的片段清单。渲染成片需要本地转码，当前版本只做工程层。"
         actions={
