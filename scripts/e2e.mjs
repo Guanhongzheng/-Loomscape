@@ -244,6 +244,20 @@ async function run() {
   check('不再使用「已缓存」文案', !engineUi.cachedLabel);
   check('顶栏挂了加载进度', engineUi.headerHook);
 
+  // fp32 for these repos is a 0.6MB graph plus a 2.1GB external-data blob,
+  // past the size one Response can hold — WebGPU has to ask for fp16 instead.
+  const backendSelect = page.locator('select').filter({ hasText: 'WebGPU' }).first();
+  await backendSelect.selectOption('webgpu');
+  await page.waitForTimeout(400);
+  const gpuText = await page.locator('[data-model="bge-m3"]').innerText();
+  check('WebGPU 请求 fp16 而不是 fp32', /· fp16/.test(gpuText) && !/fp32/.test(gpuText), gpuText.replace(/\n+/g, ' | ').slice(0, 90));
+  const gpuSize = /约 ([\d.]+) (MB|GB)/.exec(gpuText);
+  check('WebGPU 体积按 fp16 计', gpuSize?.[2] === 'GB', gpuSize?.[0] ?? '—');
+  await backendSelect.selectOption('auto');
+  await page.waitForTimeout(300);
+  const cpuText = await page.locator('[data-model="bge-m3"]').innerText();
+  check('WASM 体积按 int8 计', /543\.0 MB · int8/.test(cpuText), cpuText.replace(/\n+/g, ' | ').slice(0, 90));
+
   // The text workbench reads its engine from settings only.
   await page.goto(base + '/studio/text', { waitUntil: 'networkidle' });
   await page.waitForTimeout(600);
