@@ -2,7 +2,7 @@
 
 一个面向创作者的多模态工作台：文字、画面、声音与时间放在同一个工作面里，从一句提纲起稿，在同一个地方收尾。
 
-仓库当前是 v0.1，两页式结构——第一页是横向翻阅的产品介绍，第二页是七个工作台。数据默认只写进浏览器，不经过服务端。
+仓库当前是 v0.1，两页式结构——第一页横向翻阅产品介绍，继续向下滚动吸附到第二页：完整的工作台。两页在同一个文档里，数据默认只写进浏览器，不经过服务端。
 
 ## 现在能做什么
 
@@ -22,7 +22,7 @@
 
 文本和嵌入各有两条路径，在设置页切换：
 
-- **云端**：兼容 `/chat/completions` 与 `/embeddings` 的任意服务，支持工具调用与多步生成。
+- **云端**：OpenAI、Anthropic Claude、Google Gemini、智谱 AI、DeepSeek，或任何兼容端点。各家用各自的协议（OpenAI 与 GLM、DeepSeek 走 chat completions，Claude 走 Messages API，Gemini 走 Generative Language API），由服务端按 `wire` 选择对应 SDK provider。
 - **本地**：权重通过 transformers.js 在浏览器内运行，下载后断网可用。
 
 | 模型 | 任务 | 体积 | 说明 |
@@ -62,7 +62,7 @@ npm start
 
 支持的协议：
 
-- 文本：任何兼容 `POST /chat/completions` 的服务（OpenAI、DeepSeek、智谱 GLM、Moonshot、通义千问，或自建网关）
+- 文本：OpenAI、Anthropic Claude、Google Gemini、智谱 GLM、DeepSeek，或任何兼容 `POST /chat/completions` 的自建服务
 - 嵌入：任何兼容 `POST /embeddings` 的服务（通义 text-embedding-v3/v4、OpenAI text-embedding-3-*）
 - 图像：OpenAI `POST /images/generations`、Stability `POST /v2beta/stable-image/generate/sd3`
 - 语音：Whisper 兼容 `POST /audio/transcriptions`
@@ -74,8 +74,8 @@ npm start
 ```
 src/
 ├── app/
-│   ├── page.tsx                # 介绍页（五屏横向翻阅，末屏是工作台）
-│   ├── studio/                 # 工作台（七个页面 + 布局）
+│   ├── page.tsx                # 两页式入口：横向介绍 + 向下吸附的工作台
+│   ├── studio/                 # 七个工作台页面（总览重定向回首页第二页）
 │   └── api/                    # chat / embed / image / probe / transcribe / health
 ├── components/
 │   ├── intro/                  # 织纹画布、纸飞机、四屏叙事
@@ -97,6 +97,8 @@ src/
 **拟态与纸面**。整体是浅色立体（neumorphism）：同一色相上做明暗双向投影，按下去阴影翻转为内凹。没有纯白卡片，也没有硬边框，层次靠光影而不是描边。
 
 **织纹背景**。首页背景是一块用顶点着色器变形的线阵，44 条经线与 26 条纬线，鼠标位置会轻微把它拽向光标。用 three.js 手写，不引 R3F，首屏 JS 控制在 90KB 左右（gzip 前）。
+
+**两页之间**。介绍页是 `overflow-x` 的吸附容器，外面再套一层 `overflow-y` 吸附容器。在第 4 屏继续向下滚时，滚轮事件不再被横向容器拦截，交给文档吸附到工作台；在工作台顶部继续向上滚，`overscroll` 会链回介绍页。`/studio` 重定向到 `/#workspace`，直接分享链接也能落到工作台。
 
 **纸飞机**。位置由横向翻阅的滚动进度驱动，沿左下的起点飞到右上，末屏缩小消失。用 `left/top` 百分比而不是位移百分比——后者以元素自身尺寸为基准，会在窗口变化时跑偏。
 
