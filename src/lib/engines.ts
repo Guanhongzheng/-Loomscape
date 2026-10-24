@@ -61,9 +61,9 @@ export const LOCAL_TEXT: LocalModel[] = [
     repo: 'onnx-community/Qwen2.5-0.5B-Instruct',
     task: 'text',
     label: 'Qwen2.5 0.5B',
-    note: '端侧起草，首次加载约 760MB，之后离线可用',
-    dtype: 'q4',
-    sizeMB: 760,
+    note: '端侧起草，首次加载约 490MB，之后离线可用',
+    dtype: 'q8',
+    sizeMB: 490,
     languages: '中英',
   },
 ];

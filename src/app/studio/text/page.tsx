@@ -179,7 +179,9 @@ export default function TextWorkbench() {
           backendPreference: prefs.backend,
           system: context ? `${system}\n\n${context}` : system,
           turns: [{ role: 'user', content: prompt }],
-          maxTokens: Math.round(160 + length * 6),
+          // On-device decoding runs at a few tokens per second; 700 tokens
+          // would take minutes, so the local path keeps the budget short.
+          maxTokens: Math.min(240, Math.round(80 + length * 3)),
           temperature: tone === '锋利' ? 0.9 : tone === '明亮' ? 0.8 : 0.6,
           signal: controller.signal,
           onToken: (chunk) => {
