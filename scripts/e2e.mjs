@@ -233,12 +233,16 @@ async function run() {
       setCurrent: text.includes('设为当前'),
       loadButtons: buttons.filter((label) => /^(加载|下载并加载)$/.test(label)).length,
       threads: /\d+ 线程/.test(text),
+      cachedLabel: text.includes('已缓存'),
+      headerHook: document.querySelector('header')?.hasAttribute('data-loading-model') ?? false,
     };
   });
   check('本地模型区显示驻留状态', engineUi.resident && engineUi.idle);
   check('已移除「设为当前」', !engineUi.setCurrent);
   check('每个本地模型都有加载入口', engineUi.loadButtons >= 3, `buttons=${engineUi.loadButtons}`);
   check('显示 WASM 线程数', engineUi.threads);
+  check('不再使用「已缓存」文案', !engineUi.cachedLabel);
+  check('顶栏挂了加载进度', engineUi.headerHook);
 
   // The text workbench reads its engine from settings only.
   await page.goto(base + '/studio/text', { waitUntil: 'networkidle' });

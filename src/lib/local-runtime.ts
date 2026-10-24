@@ -334,6 +334,46 @@ export function isWeightRequest(url: string, repo: string, dtype: 'q8' | 'q4' = 
   }
 }
 
+export type CacheStats = {
+  files: number;
+  bytes: number;
+  /** The weight file this dtype needs is present. */
+  weights: boolean;
+};
+
+/**
+ * Reads the cache once for every model instead of once per model. Sizes come
+ * from the stored `content-length`; responses without it are counted but not
+ * measured, which is why `bytes` can be lower than the model card claims.
+ */
+export async function scanModelCache(models: LocalModel[]): Promise<Record<string, CacheStats>> {
+  const result: Record<string, CacheStats> = {};
+  for (const model of models) result[model.id] = { files: 0, bytes: 0, weights: false };
+
+  if (typeof caches === 'undefined') return result;
+
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const keys = await cache.keys();
+    for (const request of keys) {
+      for (const model of models) {
+        if (!request.url.includes(model.repo)) continue;
+        const row = result[model.id];
+        row.files += 1;
+        if (isWeightRequest(request.url, model.repo, model.dtype)) row.weights = true;
+
+        const response = await cache.match(request);
+        const length = Number(response?.headers.get('content-length') ?? 0);
+        if (Number.isFinite(length) && length > 0) row.bytes += length;
+      }
+    }
+  } catch {
+    // a blocked cache is the same as an empty one for the caller
+  }
+
+  return result;
+}
+
 /** Any file for this repo, including weights from a different quantisation. */
 export async function hasRepoCache(repo: string): Promise<boolean> {
   if (typeof caches === 'undefined') return false;

@@ -25,12 +25,12 @@ import {
 } from '@/lib/engines';
 import {
   backendLabel,
-  hasRepoCache,
-  isModelCached,
   loadModel,
   removeModel,
   runtimeInfo,
+  scanModelCache,
   unloadModel,
+  type CacheStats,
 } from '@/lib/local-runtime';
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { useEndpoints } from '@/lib/endpoint-store';
@@ -57,22 +57,12 @@ export function EnginePanel() {
 
   const [draft, setDraft] = useState<Endpoint>(endpoints.text);
   const [testing, setTesting] = useState(false);
-  const [cached, setCached] = useState<Record<string, boolean>>({});
-  const [stale, setStale] = useState<Record<string, boolean>>({});
+  const [cache, setCache] = useState<Record<string, CacheStats>>({});
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
   const refresh = useCallback(async () => {
-    const rows = await Promise.all(
-      ALL_LOCAL_MODELS.map(async (model) => {
-        const weight = await isModelCached(model.repo, model.dtype);
-        // Files from an older quantisation still take up quota and cannot run.
-        const leftovers = !weight && (await hasRepoCache(model.repo));
-        return [model.id, weight, leftovers] as const;
-      }),
-    );
-    setCached(Object.fromEntries(rows.map(([id, weight]) => [id, weight])));
-    setStale(Object.fromEntries(rows.map(([id, , leftovers]) => [id, leftovers])));
+    setCache(await scanModelCache(ALL_LOCAL_MODELS));
     setEmbedder(await activeEmbedder());
   }, []);
 
@@ -206,7 +196,7 @@ export function EnginePanel() {
       }
       await patch({ textMode: 'local' });
       const model = ALL_LOCAL_MODELS.find((item) => item.task === 'text' && item.id === prefs.textModelId);
-      if (model && resident?.modelId !== model.id && cached[model.id]) await activate(model);
+      if (model && resident?.modelId !== model.id && cache[model.id]?.weights) await activate(model);
       return;
     }
 
@@ -216,11 +206,11 @@ export function EnginePanel() {
     const model = ALL_LOCAL_MODELS.find(
       (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
     );
-    if (model && resident?.modelId !== model.id && cached[model.id]) await activate(model);
+    if (model && resident?.modelId !== model.id && cache[model.id]?.weights) await activate(model);
   };
 
   const preset = PRESETS.text.find((item) => item.id === draft.preset);
-  const textReady = cached[prefs.textModelId];
+  const textReady = cache[prefs.textModelId]?.weights;
   const cloudReady = hasKey(draft);
   const loadingModel = ALL_LOCAL_MODELS.find((item) => models[item.id]?.state === 'downloading');
   const loadingState = loadingModel ? models[loadingModel.id] : undefined;
@@ -455,8 +445,10 @@ export function EnginePanel() {
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {ALL_LOCAL_MODELS.map((model) => {
             const state = models[model.id];
-            const ready = cached[model.id];
-            const leftovers = stale[model.id];
+            const stats = cache[model.id];
+            const ready = stats?.weights ?? false;
+            const leftovers = !ready && (stats?.files ?? 0) > 0;
+            const size = stats?.bytes ?? 0;
             const loading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
             const loadedNow = resident?.modelId === model.id;
@@ -495,12 +487,12 @@ export function EnginePanel() {
                       已加载
                     </span>
                   ) : ready ? (
-                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/55">
-                      已缓存
+                    <span className="shrink-0 font-mono text-[9px] tracking-wide text-muted/55">
+                      已下载{size > 0 ? ` · ${formatBytes(size)}` : ''}
                     </span>
                   ) : leftovers ? (
-                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/45">
-                      旧缓存
+                    <span className="shrink-0 font-mono text-[9px] tracking-wide text-muted/45">
+                      旧权重{size > 0 ? ` · ${formatBytes(size)}` : ''}
                     </span>
                   ) : null}
                 </div>
@@ -575,14 +567,14 @@ export function EnginePanel() {
                   {ready && !loadedNow ? (
                     <Button variant="ghost" size="sm" onClick={() => void drop(model)}>
                       <Trash2 size={11} />
-                      删除缓存
+                      删除下载
                     </Button>
                   ) : null}
 
                   {leftovers ? (
                     <Button variant="ghost" size="sm" onClick={() => void drop(model)}>
                       <Trash2 size={11} />
-                      清理旧缓存
+                      清理旧权重
                     </Button>
                   ) : null}
                 </div>
@@ -592,8 +584,8 @@ export function EnginePanel() {
         </div>
 
         <p className="mt-3 text-[10.5px] leading-relaxed text-muted/65">
-          权重通过浏览器缓存保存在本机，不会上传。加载即选用，不需另设当前模型；加载另一个会先释放内存中的这一个。
-          更换嵌入引擎后，旧记忆片段不参与召回，需要重新入库。
+          权重保存在本机浏览器缓存，不会上传。加载即选用，不需另设当前模型；加载另一个会先释放内存中的这一个。
+          换过量化版本后，旧权重会标成「旧权重」，可以直接清掉。更换嵌入引擎后，旧记忆片段不参与召回，需要重新入库。
         </p>
       </div>
     </div>

@@ -4,9 +4,13 @@ import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ArrowLeft, LogOut } from 'lucide-react';
+import { ArrowLeft, Loader2, LogOut } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
+import { ALL_LOCAL_MODELS, findModel, useEngines, useModelRuntime } from '@/lib/engines';
+import { describeError } from '@/lib/errors';
+import { isModelCached, loadModel } from '@/lib/local-runtime';
+import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
 import { DOCK } from '@/lib/workbenches';
@@ -49,7 +53,53 @@ export function StudioShell({
     void enterAsGuest();
   }, [ready, user, enterAsGuest]);
 
+  const prefs = useEngines((state) => state.prefs);
+  const prefsLoaded = useEngines((state) => state.loaded);
+  const loadEngines = useEngines((state) => state.load);
+  const resident = useModelRuntime((state) => state.resident);
+  const models = useModelRuntime((state) => state.models);
+  const active = useModelRuntime((state) =>
+    ALL_LOCAL_MODELS.find((model) => state.models[model.id]?.state === 'downloading'),
+  );
+  const autoLoaded = useRef(false);
+
+  useEffect(() => {
+    void loadEngines();
+  }, [loadEngines]);
+
+  /**
+   * Entering the workspace brings back whichever local engine the settings
+   * point at, but only if its weights are already on disk: starting a 490MB
+   * download because someone scrolled past the intro would be rude.
+   */
+  useEffect(() => {
+    if (!prefsLoaded || resident || autoLoaded.current) return;
+    autoLoaded.current = true;
+
+    const candidate =
+      prefs.textMode === 'local'
+        ? findModel(prefs.textModelId)
+        : prefs.embeddingMode === 'local'
+          ? findModel(prefs.embeddingModelId)
+          : undefined;
+    if (!candidate) return;
+
+    void (async () => {
+      if (!(await isModelCached(candidate.repo, candidate.dtype))) return;
+      try {
+        await loadModel(candidate, {
+          source: prefs.source,
+          backendPreference: prefs.backend,
+          report: true,
+        });
+      } catch (error) {
+        toast(`自动加载 ${candidate.label} 失败：${describeError(error)}`, 'error');
+      }
+    })();
+  }, [prefsLoaded, resident, prefs]);
+
   const online = health.text || health.image || health.speech;
+  const progress = active ? Math.round((models[active.id]?.progress ?? 0) * 100) : 0;
   const current = DOCK.find((item) =>
     item.href === '/studio' ? pathname === '/studio' : pathname.startsWith(item.href),
   );
@@ -57,7 +107,10 @@ export function StudioShell({
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden bg-[rgb(var(--paper))]">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[rgb(var(--line))]/55 px-4 md:h-16 md:px-8">
+      <header
+        data-loading-model={active?.id ?? ''}
+        className="relative flex h-14 shrink-0 items-center gap-3 border-b border-[rgb(var(--line))]/55 px-4 md:h-16 md:px-8"
+      >
         <Link href={home} onClick={() => onHome?.()} className="shrink-0">
           <span className="md:hidden">
             <Wordmark compact />
@@ -78,17 +131,25 @@ export function StudioShell({
           </div>
         </div>
 
-        <span className="hidden items-center gap-2 md:flex">
-          <span
-            className={cn(
-              'h-1.5 w-1.5 rounded-full',
-              online ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]',
-            )}
-          />
-          <span className="text-[11px] text-muted/80">
-            {loaded ? (online ? '服务已连接' : '离线演示') : '正在读取配置'}
+        {active ? (
+          <span className="flex shrink-0 items-center gap-1.5 text-[10.5px] text-muted">
+            <Loader2 size={11} className="animate-spin" />
+            <span className="hidden md:inline">加载 {active.label}</span>
+            <span className="tabular-nums">{progress}%</span>
           </span>
-        </span>
+        ) : (
+          <span className="hidden items-center gap-2 md:flex">
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                online ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]',
+              )}
+            />
+            <span className="text-[11px] text-muted/80">
+              {loaded ? (online ? '服务已连接' : '离线演示') : '正在读取配置'}
+            </span>
+          </span>
+        )}
 
         <Link
           href={home}
@@ -120,6 +181,22 @@ export function StudioShell({
             <LogOut size={13.5} strokeWidth={1.7} />
           </button>
         </div>
+
+        {active ? (
+          <div
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${active.label} 加载进度`}
+            className="absolute inset-x-0 bottom-0 h-[2px] overflow-hidden bg-[rgb(var(--line))]/45"
+          >
+            <div
+              className="h-full bg-[rgb(var(--accent))] transition-[width] duration-300 ease-out"
+              style={{ width: `${Math.max(progress, 2)}%` }}
+            />
+          </div>
+        ) : null}
       </header>
 
       <motion.main
