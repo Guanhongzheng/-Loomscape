@@ -25,6 +25,7 @@ import {
 } from '@/lib/engines';
 import {
   backendLabel,
+  hasRepoCache,
   isModelCached,
   loadModel,
   removeModel,
@@ -57,16 +58,21 @@ export function EnginePanel() {
   const [draft, setDraft] = useState<Endpoint>(endpoints.text);
   const [testing, setTesting] = useState(false);
   const [cached, setCached] = useState<Record<string, boolean>>({});
+  const [stale, setStale] = useState<Record<string, boolean>>({});
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
   const refresh = useCallback(async () => {
     const rows = await Promise.all(
-      ALL_LOCAL_MODELS.map(
-        async (model) => [model.id, await isModelCached(model.repo, model.dtype)] as const,
-      ),
+      ALL_LOCAL_MODELS.map(async (model) => {
+        const weight = await isModelCached(model.repo, model.dtype);
+        // Files from an older quantisation still take up quota and cannot run.
+        const leftovers = !weight && (await hasRepoCache(model.repo));
+        return [model.id, weight, leftovers] as const;
+      }),
     );
-    setCached(Object.fromEntries(rows));
+    setCached(Object.fromEntries(rows.map(([id, weight]) => [id, weight])));
+    setStale(Object.fromEntries(rows.map(([id, , leftovers]) => [id, leftovers])));
     setEmbedder(await activeEmbedder());
   }, []);
 
@@ -450,6 +456,7 @@ export function EnginePanel() {
           {ALL_LOCAL_MODELS.map((model) => {
             const state = models[model.id];
             const ready = cached[model.id];
+            const leftovers = stale[model.id];
             const loading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
             const loadedNow = resident?.modelId === model.id;
@@ -490,6 +497,10 @@ export function EnginePanel() {
                   ) : ready ? (
                     <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/55">
                       已缓存
+                    </span>
+                  ) : leftovers ? (
+                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/45">
+                      旧缓存
                     </span>
                   ) : null}
                 </div>
@@ -565,6 +576,13 @@ export function EnginePanel() {
                     <Button variant="ghost" size="sm" onClick={() => void drop(model)}>
                       <Trash2 size={11} />
                       删除缓存
+                    </Button>
+                  ) : null}
+
+                  {leftovers ? (
+                    <Button variant="ghost" size="sm" onClick={() => void drop(model)}>
+                      <Trash2 size={11} />
+                      清理旧缓存
                     </Button>
                   ) : null}
                 </div>

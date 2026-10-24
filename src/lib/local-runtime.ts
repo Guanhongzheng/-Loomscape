@@ -334,6 +334,18 @@ export function isWeightRequest(url: string, repo: string, dtype: 'q8' | 'q4' = 
   }
 }
 
+/** Any file for this repo, including weights from a different quantisation. */
+export async function hasRepoCache(repo: string): Promise<boolean> {
+  if (typeof caches === 'undefined') return false;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const keys = await cache.keys();
+    return keys.some((request) => request.url.includes(repo));
+  } catch {
+    return false;
+  }
+}
+
 export async function isModelCached(repo: string, dtype: 'q8' | 'q4' = 'q8'): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
   try {
