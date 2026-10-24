@@ -3,7 +3,7 @@
 import { STORES, all, getPref, put, remove, setPref } from './db';
 import { opaqueId } from './id';
 import { findModel, useEngines } from './engines';
-import { embedTexts, isModelCached } from './local-runtime';
+import { embedTexts, isModelCached, isResident } from './local-runtime';
 import { requestEmbeddings } from './api';
 import { useEndpoints } from './endpoint-store';
 import { hasKey } from './providers';
@@ -106,10 +106,17 @@ export async function activeEmbedder(): Promise<EmbedderInfo> {
 
   if (prefs.embeddingMode === 'local') {
     const model = findModel(prefs.embeddingModelId);
-    if (model && (await isModelCached(model.repo))) {
+    // A cached model still has to be loaded before it can encode anything, and
+    // only one model is resident at a time, so "local" means "currently loaded".
+    if (model && isResident(model.id)) {
       return { tag: `local:${model.id}`, label: model.label, dims: model.dims };
     }
-    return { tag: 'hash', label: '哈希（模型未下载）', dims: HASH_DIM };
+    const cached = model ? await isModelCached(model.repo) : false;
+    return {
+      tag: 'hash',
+      label: cached ? `哈希（${model?.label ?? '本地模型'} 未加载）` : '哈希（模型未下载）',
+      dims: HASH_DIM,
+    };
   }
 
   if (prefs.embeddingMode === 'api') {

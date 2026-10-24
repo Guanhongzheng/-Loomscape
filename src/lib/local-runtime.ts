@@ -13,7 +13,16 @@ type RuntimeModule = {
     useBrowserCache: boolean;
     remoteHost: string;
     remotePathTemplate: string;
-    backends: { onnx: { wasm?: { wasmPaths?: string } } };
+    backends: {
+      onnx: {
+        wasm?: {
+          wasmPaths?: string;
+          numThreads?: number;
+          simd?: boolean;
+          proxy?: boolean;
+        };
+      };
+    };
   };
   pipeline: (task: string, model: string, options: Record<string, unknown>) => Promise<unknown>;
   TextStreamer: new (
@@ -28,6 +37,30 @@ type RuntimeModule = {
 
 let modulePromise: Promise<RuntimeModule> | null = null;
 
+/**
+ * WASM can only use worker threads when the document is cross-origin isolated,
+ * because that is the only way `SharedArrayBuffer` exists. The app sends
+ * COOP/COEP for exactly this reason; behind a proxy that strips them the
+ * runtime drops to a single thread instead of failing.
+ *
+ * One core is left to the UI, and the cap is four: transformer matmuls stop
+ * scaling past that and each worker costs memory next to a half-billion
+ * parameter model.
+ */
+export function threadCount(cores: number, isolated: boolean): number {
+  if (!isolated) return 1;
+  const usable = Math.max(1, Math.floor(cores) - 1);
+  return Math.min(usable, 4);
+}
+
+export function runtimeInfo(): { cores: number; isolated: boolean; threads: number } {
+  const cores =
+    typeof navigator !== 'undefined' ? Math.max(1, navigator.hardwareConcurrency || 2) : 2;
+  const isolated =
+    (globalThis as unknown as { crossOriginIsolated?: boolean }).crossOriginIsolated === true;
+  return { cores, isolated, threads: threadCount(cores, isolated) };
+}
+
 async function runtime(source: ModelSource): Promise<RuntimeModule> {
   if (!modulePromise) {
     const url = '/runtime/transformers.min.js';
@@ -41,7 +74,13 @@ async function runtime(source: ModelSource): Promise<RuntimeModule> {
     source === 'modelscope' ? 'https://modelscope.cn/models/' : 'https://huggingface.co/';
   mod.env.remotePathTemplate = '{model}/resolve/{revision}/';
   const wasmBackend = mod.env.backends.onnx.wasm;
-  if (wasmBackend) wasmBackend.wasmPaths = '/runtime/';
+  if (wasmBackend) {
+    wasmBackend.wasmPaths = '/runtime/';
+    wasmBackend.numThreads = runtimeInfo().threads;
+    wasmBackend.simd = true;
+    // Worker proxies add a message hop per call; the main thread is fine here.
+    wasmBackend.proxy = false;
+  }
 
   return mod;
 }
@@ -85,17 +124,97 @@ type LoadOptions = {
 const pipelines = new Map<string, Promise<unknown>>();
 const backends = new Map<string, Backend>();
 
+type Resident = {
+  modelId: string;
+  repo: string;
+  task: 'embedding' | 'text';
+  key: string;
+  backend: Backend;
+  threads: number;
+};
+
+/**
+ * A resident model owns the whole on-device budget: its ONNX session, its
+ * weights and the WASM heap it grew. Loading a second one without releasing
+ * the first is what makes a phone tab die, so the module keeps exactly one and
+ * evicts it before starting another.
+ */
+let resident: Resident | null = null;
+
 function dtypeFor(model: LocalModel, backend: Backend): string {
   return backend === 'webgpu' ? 'fp32' : model.dtype;
 }
 
+async function dispose(pipe: unknown): Promise<void> {
+  const candidate = pipe as { dispose?: () => Promise<void> | void };
+  try {
+    await candidate.dispose?.();
+  } catch {
+    // an already-released session is not an error worth surfacing
+  }
+}
+
+export function residentModelId(): string | null {
+  return resident?.modelId ?? null;
+}
+
+export function isResident(modelId: string): boolean {
+  return resident?.modelId === modelId;
+}
+
+/**
+ * Releases the loaded model. Pending loads are disposed as soon as they land,
+ * which lets the caller evict while a download is still in flight without
+ * leaving an orphan session behind.
+ */
+export async function unloadModel(): Promise<void> {
+  const entries = Array.from(pipelines.values());
+  pipelines.clear();
+  resident = null;
+  backends.clear();
+  useModelRuntime.getState().clearResident();
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        await dispose(await entry);
+      } catch {
+        // the load itself failed; nothing to release
+      }
+    }),
+  );
+}
+
+/**
+ * Loads are serialised. Two clicks in quick succession used to start two
+ * pipelines at once; whichever finished last won the resident slot while the
+ * other stayed in memory, because the eviction check ran before the first load
+ * had finished. A single gate makes the second load wait, then evict the first.
+ */
+let gate: Promise<unknown> = Promise.resolve();
+
+function serialised<T>(work: () => Promise<T>): Promise<T> {
+  const run = gate.then(work, work);
+  gate = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function loadPipeline(model: LocalModel, options: LoadOptions): Promise<{ pipe: any; backend: Backend }> {
+  return serialised(() => acquire(model, options));
+}
+
+async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe: any; backend: Backend }> {
   const mod = await runtime(options.source);
   const backend = await detectBackend(options.backendPreference);
   const dtype = dtypeFor(model, backend);
-  const key = `${pipelineTask(model.task)}:${model.repo}:${dtype}:${backend}`;
+  const threads = runtimeInfo().threads;
+  const key = `${pipelineTask(model.task)}:${model.repo}:${dtype}:${backend}:${threads}`;
 
   backends.set(model.id, backend);
+  if (resident && resident.key !== key) await unloadModel();
   if (pipelines.has(key)) {
     return { pipe: await pipelines.get(key)!, backend };
   }
@@ -155,6 +274,22 @@ async function loadPipeline(model: LocalModel, options: LoadOptions): Promise<{ 
 
   try {
     const pipe = await task;
+    // Anything previously marked ready is gone: only one model lives at a time.
+    const store = useModelRuntime.getState();
+    Object.entries(store.models).forEach(([id, state]) => {
+      if (id !== model.id && state.state === 'ready') store.reset(id);
+    });
+
+    resident = {
+      modelId: model.id,
+      repo: model.repo,
+      task: model.task,
+      key,
+      backend,
+      threads,
+    };
+    store.setResident({ modelId: model.id, backend, threads });
+
     if (options.report) {
       runtimeStore.set(model.id, { state: 'ready', progress: 1, backend, total: 0, loaded: 0 });
     }
@@ -191,6 +326,7 @@ export async function isModelCached(repo: string): Promise<boolean> {
 }
 
 export async function removeModel(repo: string): Promise<number> {
+  if (resident?.repo === repo) await unloadModel();
   if (typeof caches === 'undefined') return 0;
   const cache = await caches.open(CACHE_NAME);
   const keys = await cache.keys();
@@ -282,9 +418,15 @@ export async function streamLocal(options: {
 }
 
 export function forgetPipeline(repo: string) {
-  Array.from(pipelines.keys())
-    .filter((key) => key.includes(repo))
-    .forEach((key) => pipelines.delete(key));
+  const stale = Array.from(pipelines.entries()).filter(([key]) => key.includes(repo));
+  stale.forEach(([key, entry]) => {
+    pipelines.delete(key);
+    void entry.then(dispose).catch(() => undefined);
+  });
+  if (resident?.repo === repo) {
+    resident = null;
+    useModelRuntime.getState().clearResident();
+  }
 }
 
 export function lastBackend(modelId: string): Backend | undefined {

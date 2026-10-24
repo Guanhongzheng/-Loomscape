@@ -125,14 +125,25 @@ export type ModelRuntimeState = {
   message?: string;
 };
 
+/** Only one local model is kept in memory; this is the one that is loaded. */
+export type ResidentInfo = {
+  modelId: string;
+  backend: Backend;
+  threads: number;
+} | null;
+
 type RuntimeStore = {
   models: Record<string, ModelRuntimeState>;
+  resident: ResidentInfo;
   set: (id: string, patch: Partial<ModelRuntimeState>) => void;
   reset: (id: string) => void;
+  setResident: (info: NonNullable<ResidentInfo>) => void;
+  clearResident: () => void;
 };
 
 export const useModelRuntime = create<RuntimeStore>((set) => ({
   models: {},
+  resident: null,
   set: (id, patch) =>
     set((state) => ({
       models: {
@@ -143,7 +154,10 @@ export const useModelRuntime = create<RuntimeStore>((set) => ({
   reset: (id) =>
     set((state) => ({
       models: { ...state.models, [id]: { state: 'idle', progress: 0 } },
+      resident: state.resident?.modelId === id ? null : state.resident,
     })),
+  setResident: (info) => set({ resident: info }),
+  clearResident: () => set({ resident: null }),
 }));
 
 export function formatBytes(bytes?: number): string {

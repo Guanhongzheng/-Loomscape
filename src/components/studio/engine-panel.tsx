@@ -1,7 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Cpu, Download, Loader2, Plug, Trash2, TriangleAlert, Zap } from 'lucide-react';
+import {
+  Check,
+  Cpu,
+  Download,
+  Loader2,
+  Plug,
+  Power,
+  Trash2,
+  TriangleAlert,
+  Zap,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { Segmented } from '@/components/ui/controls';
@@ -13,12 +23,21 @@ import {
   useModelRuntime,
   type LocalModel,
 } from '@/lib/engines';
-import { isModelCached, loadModel, removeModel } from '@/lib/local-runtime';
+import {
+  backendLabel,
+  isModelCached,
+  loadModel,
+  removeModel,
+  runtimeInfo,
+  unloadModel,
+} from '@/lib/local-runtime';
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
 import { cn } from '@/lib/cn';
+
+type RuntimeFacts = { cores: number; isolated: boolean; threads: number };
 
 export function EnginePanel() {
   const prefs = useEngines((state) => state.prefs);
@@ -27,6 +46,7 @@ export function EnginePanel() {
   const load = useEngines((state) => state.load);
 
   const models = useModelRuntime((state) => state.models);
+  const resident = useModelRuntime((state) => state.resident);
   const setModel = useModelRuntime((state) => state.set);
   const resetModel = useModelRuntime((state) => state.reset);
 
@@ -37,6 +57,7 @@ export function EnginePanel() {
   const [testing, setTesting] = useState(false);
   const [cached, setCached] = useState<Record<string, boolean>>({});
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
+  const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
   const refresh = useCallback(async () => {
     const rows = await Promise.all(
@@ -51,9 +72,13 @@ export function EnginePanel() {
   }, [load]);
 
   useEffect(() => {
+    setFacts(runtimeInfo());
+  }, []);
+
+  useEffect(() => {
     if (!loaded) return;
     void refresh();
-  }, [loaded, prefs, refresh]);
+  }, [loaded, prefs, resident, refresh]);
 
   useEffect(() => {
     setDraft(endpoints.text);
@@ -73,9 +98,13 @@ export function EnginePanel() {
   };
 
   const saveCloud = async () => {
-    await storeEndpoint(draft);
-    await patch({ textMode: 'api' });
-    toast(`已保存 ${draft.label}`, 'success');
+    try {
+      await storeEndpoint(draft);
+      await patch({ textMode: 'api' });
+      toast(`已保存 ${draft.label}`, 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '保存失败', 'error');
+    }
   };
 
   const testCloud = async () => {
@@ -94,7 +123,14 @@ export function EnginePanel() {
     }
   };
 
-  const download = async (model: LocalModel) => {
+  /**
+   * Loading is the selection: the model that is in memory is the one the
+   * workbenches use, so there is no separate "set as current" step. Because
+   * only one model can stay resident, the other task drops back to its
+   * non-local path instead of leaving a preference that would evict it later.
+   */
+  const activate = async (model: LocalModel) => {
+    const previous = ALL_LOCAL_MODELS.find((item) => item.id === resident?.modelId);
     setModel(model.id, { state: 'downloading', progress: 0, message: undefined });
     try {
       await loadModel(model, {
@@ -102,16 +138,43 @@ export function EnginePanel() {
         backendPreference: prefs.backend,
         report: true,
       });
+
+      await patch(
+        model.task === 'text'
+          ? {
+              textMode: 'local',
+              textModelId: model.id,
+              ...(prefs.embeddingMode === 'local' ? { embeddingMode: 'hash' as const } : {}),
+            }
+          : {
+              embeddingMode: 'local',
+              embeddingModelId: model.id,
+              ...(prefs.textMode === 'local' ? { textMode: 'api' as const } : {}),
+            },
+      );
+
       await refresh();
-      toast(`${model.label} 已就绪`, 'success');
+      const info = runtimeInfo();
+      const backend = useModelRuntime.getState().resident?.backend;
+      const replaced = previous && previous.id !== model.id ? `，已卸载 ${previous.label}` : '';
+      toast(
+        `已加载 ${model.label} · ${backendLabel(backend)} ${info.threads} 线程${replaced}`,
+        'success',
+      );
     } catch (error) {
       setModel(model.id, {
         state: 'error',
         progress: 0,
-        message: error instanceof Error ? error.message : '下载失败',
+        message: error instanceof Error ? error.message : '加载失败',
       });
-      toast(error instanceof Error ? error.message : '下载失败', 'error');
+      toast(error instanceof Error ? error.message : '加载失败', 'error');
     }
+  };
+
+  const unload = async () => {
+    await unloadModel();
+    await refresh();
+    toast('已卸载本地模型，内存已释放', 'info');
   };
 
   const drop = async (model: LocalModel) => {
@@ -121,9 +184,32 @@ export function EnginePanel() {
     toast(removed > 0 ? `已删除 ${removed} 个缓存文件` : '没有找到缓存文件', 'info');
   };
 
+  const chooseMode = async (task: 'text' | 'embedding', next: string) => {
+    if (task === 'text') {
+      if (next === 'api') {
+        await patch({ textMode: 'api' });
+        return;
+      }
+      await patch({ textMode: 'local' });
+      const model = ALL_LOCAL_MODELS.find((item) => item.task === 'text' && item.id === prefs.textModelId);
+      if (model && resident?.modelId !== model.id && cached[model.id]) await activate(model);
+      return;
+    }
+
+    const mode = next as 'hash' | 'local' | 'api';
+    await patch({ embeddingMode: mode });
+    if (mode !== 'local') return;
+    const model = ALL_LOCAL_MODELS.find(
+      (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
+    );
+    if (model && resident?.modelId !== model.id && cached[model.id]) await activate(model);
+  };
+
   const preset = PRESETS.text.find((item) => item.id === draft.preset);
   const textReady = cached[prefs.textModelId];
   const cloudReady = hasKey(draft);
+  const loadingModel = ALL_LOCAL_MODELS.find((item) => models[item.id]?.state === 'downloading');
+  const loadingState = loadingModel ? models[loadingModel.id] : undefined;
 
   return (
     <div className="space-y-5">
@@ -136,7 +222,7 @@ export function EnginePanel() {
           <Segmented
             size="sm"
             value={prefs.textMode}
-            onChange={(next) => void patch({ textMode: next })}
+            onChange={(next) => void chooseMode('text', next)}
             options={[
               { value: 'api', label: '云端 API' },
               { value: 'local', label: '本地模型' },
@@ -147,9 +233,11 @@ export function EnginePanel() {
               ? cloudReady
                 ? `走 ${draft.label} · ${draft.model}，支持工具调用与多步生成。`
                 : '尚未填写密钥，选好服务商后填入 Key。'
-              : textReady
-                ? '在浏览器内推理，断网可用；不支持工具调用。'
-                : '本地权重尚未下载，去下方下载后可用。'}
+              : resident?.modelId === prefs.textModelId
+                ? '已在内存中，断网可用；不支持工具调用。'
+                : textReady
+                  ? '权重已缓存，加载后即可在浏览器内推理。'
+                  : '本地权重尚未下载，去下方「下载并加载」。'}
           </p>
         </div>
 
@@ -161,7 +249,7 @@ export function EnginePanel() {
           <Segmented
             size="sm"
             value={prefs.embeddingMode}
-            onChange={(next) => void patch({ embeddingMode: next })}
+            onChange={(next) => void chooseMode('embedding', next)}
             options={[
               { value: 'hash', label: '哈希' },
               { value: 'local', label: '本地' },
@@ -300,11 +388,53 @@ export function EnginePanel() {
       ) : null}
 
       <div>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-[12.5px] font-medium text-ink/85">本地模型</h3>
           <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/55">
-            {prefs.source === 'modelscope' ? 'modelscope' : 'huggingface'} ·{' '}
-            {prefs.backend === 'auto' ? 'auto backend' : prefs.backend}
+            {prefs.source === 'modelscope' ? 'modelscope' : 'huggingface'} · single resident
+          </span>
+        </div>
+
+        <div
+          data-resident={resident?.modelId ?? ''}
+          className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-3 shadow-[var(--shadow-inset-sm)]"
+        >
+          <span className="flex items-center gap-2 text-[11.5px] text-muted">
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                resident ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]/70',
+              )}
+            />
+            驻留模型
+          </span>
+          <span className="text-[12px] text-ink/85">
+            {loadingModel
+              ? `加载中 · ${loadingModel.label} ${Math.round((loadingState?.progress ?? 0) * 100)}%`
+              : resident
+                ? ALL_LOCAL_MODELS.find((item) => item.id === resident.modelId)?.label ?? '未知'
+                : '无'}
+          </span>
+          {resident ? (
+            <span className="font-mono text-[10px] text-muted/65">
+              {backendLabel(resident.backend)} · {resident.threads} 线程
+            </span>
+          ) : null}
+          {resident ? (
+            <Button variant="ghost" size="sm" onClick={() => void unload()} className="ml-auto">
+              <Power size={11} />
+              卸载
+            </Button>
+          ) : null}
+          <span
+            className={cn(
+              'text-[10.5px] leading-relaxed text-muted/65',
+              resident ? 'w-full' : 'w-full',
+            )}
+          >
+            同一时间只驻留一个模型，加载另一个会先卸载当前的。当前环境：{facts?.cores ?? '—'} 核 ·
+            WASM {facts?.threads ?? 1} 线程
+            {facts && !facts.isolated ? '（未开启跨源隔离，只能单线程）' : ''}。
           </span>
         </div>
 
@@ -312,22 +442,18 @@ export function EnginePanel() {
           {ALL_LOCAL_MODELS.map((model) => {
             const state = models[model.id];
             const ready = cached[model.id];
-            const downloading = state?.state === 'downloading';
+            const loading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
-            const active =
-              (model.task === 'text' &&
-                prefs.textMode === 'local' &&
-                prefs.textModelId === model.id) ||
-              (model.task === 'embedding' &&
-                prefs.embeddingMode === 'local' &&
-                prefs.embeddingModelId === model.id);
+            const loadedNow = resident?.modelId === model.id;
 
             return (
               <div
                 key={model.id}
+                data-model={model.id}
+                data-loaded={loadedNow ? 'true' : 'false'}
                 className={cn(
                   'rounded-xl p-4 shadow-[var(--shadow-inset-sm)]',
-                  active && 'ring-1 ring-[rgb(var(--accent))]/25',
+                  loadedNow && 'ring-1 ring-[rgb(var(--accent))]/25',
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -348,15 +474,19 @@ export function EnginePanel() {
                     </div>
                   </div>
 
-                  {ready ? (
+                  {loadedNow ? (
                     <span className="flex shrink-0 items-center gap-1 text-[10px] text-[#3f6b4f]">
                       <Check size={11} />
-                      就绪
+                      已加载
+                    </span>
+                  ) : ready ? (
+                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/55">
+                      cached
                     </span>
                   ) : null}
                 </div>
 
-                {downloading ? (
+                {loading ? (
                   <div className="mt-3">
                     <div className="mb-1.5 flex items-center justify-between font-mono text-[9.5px] text-muted/70">
                       <span className="truncate pr-3">{state?.file ?? '准备中'}</span>
@@ -380,50 +510,36 @@ export function EnginePanel() {
                 {state?.state === 'error' ? (
                   <div className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-[#8c3b32]">
                     <TriangleAlert size={11} className="mt-0.5 shrink-0" />
-                    {state.message ?? '下载失败'}
+                    {state.message ?? '加载失败'}
                   </div>
                 ) : null}
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    variant={ready ? 'ghost' : 'primary'}
-                    size="sm"
-                    onClick={() => download(model)}
-                    disabled={downloading}
-                  >
-                    {downloading ? (
-                      <Loader2 size={11} className="animate-spin" />
-                    ) : (
-                      <Download size={11} />
-                    )}
-                    {downloading ? '下载中' : ready ? '重新加载' : '下载'}
-                  </Button>
-                  {ready ? (
-                    <Button variant="ghost" size="sm" onClick={() => drop(model)}>
+                  {loadedNow ? (
+                    <Button variant="ghost" size="sm" onClick={() => void unload()} disabled={loading}>
+                      <Power size={11} />
+                      卸载
+                    </Button>
+                  ) : (
+                    <Button
+                      variant={ready ? 'ghost' : 'primary'}
+                      size="sm"
+                      onClick={() => void activate(model)}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Download size={11} />
+                      )}
+                      {loading ? '加载中' : ready ? '加载' : '下载并加载'}
+                    </Button>
+                  )}
+
+                  {ready && !loadedNow ? (
+                    <Button variant="ghost" size="sm" onClick={() => void drop(model)}>
                       <Trash2 size={11} />
-                      删除
-                    </Button>
-                  ) : null}
-                  {model.task === 'embedding' && ready ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        void patch({ embeddingMode: 'local', embeddingModelId: model.id })
-                      }
-                      className={cn(active && 'text-[rgb(var(--accent))]')}
-                    >
-                      设为当前
-                    </Button>
-                  ) : null}
-                  {model.task === 'text' && ready ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void patch({ textMode: 'local', textModelId: model.id })}
-                      className={cn(active && 'text-[rgb(var(--accent))]')}
-                    >
-                      设为当前
+                      删除缓存
                     </Button>
                   ) : null}
                 </div>
@@ -433,7 +549,8 @@ export function EnginePanel() {
         </div>
 
         <p className="mt-3 text-[10.5px] leading-relaxed text-muted/65">
-          权重通过浏览器缓存保存在本机，不会上传。切换下载源后需要重新下载；更换嵌入引擎会让旧记忆片段暂不参与召回。
+          权重通过浏览器缓存保存在本机，不会上传。加载即选用，不需另设当前模型；加载另一个会先释放内存中的这一个。
+          更换嵌入引擎后，旧记忆片段不参与召回，需要重新入库。
         </p>
       </div>
     </div>
