@@ -40,7 +40,7 @@ import { describeError, looksLikeMemoryPressure } from '@/lib/errors';
 import { roomFor, storageUsage, type StorageUsage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
 
-type RuntimeFacts = { cores: number; isolated: boolean; threads: number };
+type RuntimeFacts = { cores: number; isolated: boolean; threads: number; deviceMemory?: number };
 
 export function EnginePanel() {
   const prefs = useEngines((state) => state.prefs);
@@ -60,6 +60,7 @@ export function EnginePanel() {
   const [testing, setTesting] = useState(false);
   const [cache, setCache] = useState<Record<string, CacheStats>>({});
   const [usage, setUsage] = useState<StorageUsage | null>(null);
+  const [released, setReleased] = useState(false);
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
@@ -74,7 +75,8 @@ export function EnginePanel() {
   }, [load]);
 
   useEffect(() => {
-    setFacts(runtimeInfo());
+    const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    setFacts({ ...runtimeInfo(), deviceMemory: memory });
   }, []);
 
   useEffect(() => {
@@ -175,6 +177,7 @@ export function EnginePanel() {
       );
 
       await refresh();
+      setReleased(false);
       // Cache writes land slightly after the session resolves; a second scan
       // stops the card from flashing 旧权重 for files it just downloaded.
       window.setTimeout(() => void refresh(), 1200);
@@ -195,7 +198,8 @@ export function EnginePanel() {
   const unload = async () => {
     await unloadModel();
     await refresh();
-    toast('已卸载本地模型，内存已释放', 'info');
+    setReleased(true);
+    toast('已卸载；WASM 内存要刷新页面才还给系统', 'info');
   };
 
   const drop = async (model: LocalModel) => {
@@ -455,10 +459,20 @@ export function EnginePanel() {
               <Power size={11} />
               卸载
             </Button>
+          ) : released ? (
+            <span className="ml-auto flex items-center gap-2">
+              <span className="text-[10px] text-muted/65">
+                会话已释放，WASM 内存要刷新页面才归还
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+                刷新页面
+              </Button>
+            </span>
           ) : null}
           <span className="w-full text-[10.5px] leading-relaxed text-muted/65">
-            同一时间只驻留一个模型，加载另一个会先卸载当前的。当前环境：{facts?.cores ?? '—'} 核 ·
-            WASM {facts?.threads ?? 1} 线程
+            同一时间只驻留一个模型，加载另一个会先卸载当前的。当前环境：{facts?.cores ?? '—'} 核
+            {facts?.deviceMemory ? ` · ${facts.deviceMemory} GB 内存` : ''} · WASM{' '}
+            {facts?.threads ?? 1} 线程
             {facts && !facts.isolated ? '（未开启跨源隔离，只能单线程）' : ''}。
             {usage ? (
               <>

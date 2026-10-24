@@ -48,10 +48,15 @@ let modulePromise: Promise<RuntimeModule> | null = null;
  * scaling past that and each worker costs memory next to a half-billion
  * parameter model.
  */
-export function threadCount(cores: number, isolated: boolean): number {
+export function threadCount(cores: number, isolated: boolean, task: 'text' | 'embedding' = 'embedding'): number {
   if (!isolated) return 1;
   const usable = Math.max(1, Math.floor(cores) - 1);
-  return Math.min(usable, 4);
+  // Decoding keeps a KV cache and per-thread arenas alive, so a 4-thread text
+  // session can need several gigabytes where an embedding one needs tens of
+  // megabytes. Two threads is the point where the extra speed stops paying
+  // for the extra memory.
+  const cap = task === 'text' ? 2 : 4;
+  return Math.min(usable, cap);
 }
 
 export function runtimeInfo(): { cores: number; isolated: boolean; threads: number } {
@@ -77,6 +82,7 @@ async function runtime(source: ModelSource): Promise<RuntimeModule> {
   const wasmBackend = mod.env.backends.onnx.wasm;
   if (wasmBackend) {
     wasmBackend.wasmPaths = '/runtime/';
+    // Set again per session below; this is the fallback for the first load.
     wasmBackend.numThreads = runtimeInfo().threads;
     wasmBackend.simd = true;
     // Worker proxies add a message hop per call; the main thread is fine here.
@@ -211,8 +217,11 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   const mod = await runtime(options.source);
   const backend = await detectBackend(options.backendPreference);
   const dtype = dtypeFor(model, backend);
-  const threads = runtimeInfo().threads;
+  const threads = threadCount(runtimeInfo().cores, runtimeInfo().isolated, model.task);
   const key = `${pipelineTask(model.task)}:${model.repo}:${dtype}:${backend}:${threads}`;
+
+  const wasmBackend = mod.env.backends.onnx.wasm;
+  if (wasmBackend) wasmBackend.numThreads = threads;
 
   backends.set(model.id, backend);
   if (resident && resident.key !== key) await unloadModel();
@@ -267,6 +276,14 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
       device: backend === 'webgpu' ? 'webgpu' : 'wasm',
       revision: revisionOf(options.source),
       progress_callback: onProgress,
+      // Both default to on. For a decoder they pre-allocate a planner sized by
+      // the graph's peak, which is what pushes the tab towards the 4GB wasm
+      // ceiling on a small machine. The allocation saving beats the small
+      // reuse win here.
+      session_options: {
+        enableCpuMemArena: false,
+        enableMemPattern: false,
+      },
     });
     return pipe;
   })();

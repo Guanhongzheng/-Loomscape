@@ -86,6 +86,16 @@ export function StudioShell({
 
     void (async () => {
       if (!(await isModelCached(candidate.repo, candidate.dtype))) return;
+
+      // A decoder session peaks in the gigabytes. On a 4GB device that is the
+      // difference between a workspace and a crashed tab, so leave it to an
+      // explicit click there.
+      const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+      if (candidate.task === 'text' && deviceMemory && deviceMemory <= 4) {
+        toast(`${candidate.label} 需要较多内存，设备报告 ${deviceMemory}GB，请在设置里手动加载`, 'info');
+        return;
+      }
+
       try {
         await loadModel(candidate, {
           source: prefs.source,

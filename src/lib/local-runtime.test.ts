@@ -23,6 +23,13 @@ describe('threadCount', () => {
   it('floors fractional core counts', () => {
     expect(threadCount(5.9, true)).toBe(4);
   });
+
+  it('caps a text session lower than an embedding one', () => {
+    // Decoding holds a KV cache per thread; four threads can cost gigabytes.
+    expect(threadCount(16, true, 'text')).toBe(2);
+    expect(threadCount(16, true, 'embedding')).toBe(4);
+    expect(threadCount(2, true, 'text')).toBe(1);
+  });
 });
 
 describe('runtimeInfo', () => {
