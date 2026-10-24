@@ -215,6 +215,18 @@ export async function loadEndpoints(): Promise<Record<Channel, Endpoint>> {
   return result;
 }
 
+/**
+ * The store is keyed by channel, so a record without one cannot be written.
+ * Callers build endpoints from the preset table, which always sets it; this
+ * guard keeps a hand-built record from failing deep inside IndexedDB.
+ */
 export async function saveEndpoint(endpoint: Endpoint): Promise<void> {
-  await put(STORES.providers, { ...endpoint, updatedAt: Date.now() });
+  if (!endpoint.channel) throw new Error('端点缺少渠道标识，无法保存');
+  await put(STORES.providers, {
+    ...endpoint,
+    baseUrl: endpoint.baseUrl.trim(),
+    apiKey: endpoint.apiKey.trim(),
+    model: endpoint.model.trim(),
+    updatedAt: Date.now(),
+  });
 }

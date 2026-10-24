@@ -17,10 +17,85 @@ export const STORES = {
 
 export type StoreName = (typeof STORES)[keyof typeof STORES];
 
+/**
+ * Every store uses an in-line key, so a record missing its key path cannot be
+ * written at all. Keeping the map in one place lets `put` fail with a message
+ * that names the field instead of surfacing a bare DOMException.
+ */
+export const KEY_PATHS: Record<StoreName, string> = {
+  users: 'id',
+  providers: 'channel',
+  memories: 'id',
+  projects: 'id',
+  conversations: 'id',
+  messages: 'id',
+  contacts: 'uid',
+  prefs: 'key',
+};
+
 const DB_NAME = 'loomscape';
-const DB_VERSION = 1;
+/** v2: providers moved from an `id` key to `channel`. */
+const DB_VERSION = 2;
 
 let connection: Promise<IDBDatabase> | null = null;
+let handle: IDBDatabase | null = null;
+
+/** Drops and closes the cached connection; used by tests and after upgrades. */
+export function resetConnection(): void {
+  try {
+    handle?.close();
+  } catch {
+    // already closed
+  }
+  handle = null;
+  connection = null;
+}
+
+function createProviders(db: IDBDatabase): void {
+  db.createObjectStore(STORES.providers, { keyPath: KEY_PATHS.providers });
+}
+
+function upgrade(db: IDBDatabase, oldVersion: number): void {
+  if (!db.objectStoreNames.contains(STORES.users)) {
+    const users = db.createObjectStore(STORES.users, { keyPath: KEY_PATHS.users });
+    users.createIndex('email', 'email', { unique: true });
+  }
+  if (!db.objectStoreNames.contains(STORES.memories)) {
+    const memories = db.createObjectStore(STORES.memories, { keyPath: KEY_PATHS.memories });
+    memories.createIndex('createdAt', 'createdAt');
+    memories.createIndex('owner', 'owner');
+  }
+  if (!db.objectStoreNames.contains(STORES.projects)) {
+    const projects = db.createObjectStore(STORES.projects, { keyPath: KEY_PATHS.projects });
+    projects.createIndex('kind', 'kind');
+    projects.createIndex('owner', 'owner');
+    projects.createIndex('updatedAt', 'updatedAt');
+  }
+  if (!db.objectStoreNames.contains(STORES.conversations)) {
+    db.createObjectStore(STORES.conversations, { keyPath: KEY_PATHS.conversations });
+  }
+  if (!db.objectStoreNames.contains(STORES.messages)) {
+    const messages = db.createObjectStore(STORES.messages, { keyPath: KEY_PATHS.messages });
+    messages.createIndex('conversationId', 'conversationId');
+    messages.createIndex('createdAt', 'createdAt');
+  }
+  if (!db.objectStoreNames.contains(STORES.contacts)) {
+    db.createObjectStore(STORES.contacts, { keyPath: KEY_PATHS.contacts });
+  }
+  if (!db.objectStoreNames.contains(STORES.prefs)) {
+    db.createObjectStore(STORES.prefs, { keyPath: KEY_PATHS.prefs });
+  }
+
+  // v1 declared `providers` with keyPath `id`, but endpoints are keyed by
+  // channel, so every write failed. A key path cannot be altered in place, and
+  // no row could ever have been stored, so deleting the empty store is safe.
+  if (oldVersion < 2 && db.objectStoreNames.contains(STORES.providers)) {
+    db.deleteObjectStore(STORES.providers);
+  }
+  if (!db.objectStoreNames.contains(STORES.providers)) {
+    createProviders(db);
+  }
+}
 
 function open(): Promise<IDBDatabase> {
   if (connection) return connection;
@@ -33,48 +108,25 @@ function open(): Promise<IDBDatabase> {
 
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = () => {
-      const db = request.result;
-
-      if (!db.objectStoreNames.contains(STORES.users)) {
-        const users = db.createObjectStore(STORES.users, { keyPath: 'id' });
-        users.createIndex('email', 'email', { unique: true });
-      }
-      if (!db.objectStoreNames.contains(STORES.providers)) {
-        db.createObjectStore(STORES.providers, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORES.memories)) {
-        const memories = db.createObjectStore(STORES.memories, { keyPath: 'id' });
-        memories.createIndex('createdAt', 'createdAt');
-        memories.createIndex('owner', 'owner');
-      }
-      if (!db.objectStoreNames.contains(STORES.projects)) {
-        const projects = db.createObjectStore(STORES.projects, { keyPath: 'id' });
-        projects.createIndex('kind', 'kind');
-        projects.createIndex('owner', 'owner');
-        projects.createIndex('updatedAt', 'updatedAt');
-      }
-      if (!db.objectStoreNames.contains(STORES.conversations)) {
-        db.createObjectStore(STORES.conversations, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains(STORES.messages)) {
-        const messages = db.createObjectStore(STORES.messages, { keyPath: 'id' });
-        messages.createIndex('conversationId', 'conversationId');
-        messages.createIndex('createdAt', 'createdAt');
-      }
-      if (!db.objectStoreNames.contains(STORES.contacts)) {
-        db.createObjectStore(STORES.contacts, { keyPath: 'uid' });
-      }
-      if (!db.objectStoreNames.contains(STORES.prefs)) {
-        db.createObjectStore(STORES.prefs, { keyPath: 'key' });
-      }
+    request.onupgradeneeded = (event) => {
+      upgrade(request.result, event.oldVersion ?? 0);
     };
 
     request.onsuccess = () => {
-      request.result.onversionchange = () => request.result.close();
-      resolve(request.result);
+      const db = request.result;
+      handle = db;
+      db.onversionchange = () => {
+        db.close();
+        resetConnection();
+      };
+      resolve(db);
     };
     request.onerror = () => reject(request.error ?? new Error('Failed to open database'));
+    request.onblocked = () => {
+      // Another tab still holds the previous version. The request stays alive
+      // and resolves once that tab closes, so nothing to do beyond logging.
+      console.warn('[db] upgrade blocked by another tab');
+    };
   });
 
   return connection;
@@ -88,15 +140,69 @@ function run<T>(
   return open().then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(store, mode);
-        const request = work(tx.objectStore(store));
-        request.onsuccess = () => resolve(request.result as T);
-        request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+        let tx: IDBTransaction;
+        try {
+          tx = db.transaction(store, mode);
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error('Failed to open transaction'));
+          return;
+        }
+
+        let result: T;
+        let failed: unknown = null;
+
+        tx.oncomplete = () => {
+          if (failed) reject(failed);
+          else resolve(result);
+        };
+        tx.onerror = () => {
+          reject(tx.error ?? new Error(`Transaction failed on ${store}`));
+        };
+        tx.onabort = () => {
+          reject(tx.error ?? new Error(`Transaction aborted on ${store}`));
+        };
+
+        try {
+          const request = work(tx.objectStore(store));
+          request.onsuccess = () => {
+            result = request.result as T;
+          };
+          request.onerror = () => {
+            // Let the abort handler reject; stop the default error event so the
+            // browser does not log an unhandled exception for a handled failure.
+            failed = request.error ?? new Error(`IndexedDB request failed on ${store}`);
+            tx.abort();
+          };
+        } catch (error) {
+          failed = error;
+          try {
+            tx.abort();
+          } catch {
+            reject(error);
+          }
+        }
       }),
   );
 }
 
-export function put<T>(store: StoreName, value: T, key?: IDBValidKey): Promise<IDBValidKey> {
+function assertKeyPath(store: StoreName, value: unknown): void {
+  const path = KEY_PATHS[store];
+  if (!value || typeof value !== 'object') {
+    throw new Error(`写入 ${store} 的值必须是对象`);
+  }
+  const key = (value as Record<string, unknown>)[path];
+  if (key === undefined || key === null || key === '') {
+    throw new Error(`写入 ${store} 的记录缺少主键字段 "${path}"`);
+  }
+}
+
+/** Async so a missing key surfaces as a rejection rather than a sync throw. */
+export async function put<T>(
+  store: StoreName,
+  value: T,
+  key?: IDBValidKey,
+): Promise<IDBValidKey> {
+  assertKeyPath(store, value);
   return run<IDBValidKey>(store, 'readwrite', (s) =>
     key === undefined ? s.put(value as unknown as object) : s.put(value as unknown as object, key),
   );

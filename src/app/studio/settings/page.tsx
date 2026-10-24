@@ -48,6 +48,7 @@ const KIND_LABEL: Record<string, string> = {
   video: '影像',
   story: '故事',
   note: '备注',
+  doc: '资料',
 };
 
 export default function SettingsPage() {
@@ -107,8 +108,12 @@ export default function SettingsPage() {
   };
 
   const save = async (channel: Channel) => {
-    await store(drafts[channel]);
-    toast(`${CHANNELS.find((item) => item.id === channel)?.title}端点已保存`, 'success');
+    try {
+      await store(drafts[channel]);
+      toast(`${CHANNELS.find((item) => item.id === channel)?.title}端点已保存`, 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '保存失败', 'error');
+    }
   };
 
   const test = async (channel: Channel) => {
@@ -163,7 +168,7 @@ export default function SettingsPage() {
   return (
     <div>
       <WorkbenchHeader
-        index="07"
+        index="08"
         title="设置"
         description="端点、密钥与记忆都在这一页。保存后写入 IndexedDB，不上传服务器；服务端环境变量配置的端点会以只读形式生效。"
         actions={
