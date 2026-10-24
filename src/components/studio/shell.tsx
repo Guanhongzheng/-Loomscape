@@ -57,7 +57,7 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]">
-      <aside className="hidden w-[230px] shrink-0 flex-col border-r border-[rgb(var(--line))]/60 bg-[linear-gradient(180deg,rgb(var(--surface)),rgb(var(--paper)))] px-4 py-5 md:flex">
+      <aside className="hidden w-[248px] shrink-0 flex-col border-r border-[rgb(var(--line))]/60 bg-[linear-gradient(180deg,rgb(var(--surface)),rgb(var(--paper)))] px-4 py-5 md:flex">
         <Link href="/" className="px-2">
           <Wordmark />
         </Link>
@@ -182,7 +182,7 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
           transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          <div className="mx-auto w-full max-w-[1140px] px-5 py-7 md:px-8 md:py-9">{children}</div>
+          <div className="mx-auto w-full max-w-[1680px] px-4 py-6 md:px-6 md:py-8">{children}</div>
         </motion.main>
       </div>
     </div>

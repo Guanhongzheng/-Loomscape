@@ -12,6 +12,7 @@ import { WeaveCanvas } from './weave-canvas';
 import { IntroBootSkeleton } from './boot-skeleton';
 import { FlightPath, PaperPlane } from './paper-plane';
 import { SlideAbout, SlideCapabilities, SlideHero, SlideProcess } from './slides';
+import { StudioHub } from './studio-hub';
 import { AuthDialog } from './auth-dialog';
 
 // Avoids the server-render warning that useLayoutEffect triggers during SSR.
@@ -26,6 +27,7 @@ const SECTIONS = [
   { id: 'capability', label: '能力' },
   { id: 'workflow', label: '织法' },
   { id: 'about', label: '关于' },
+  { id: 'workspace', label: '工作台' },
 ];
 
 export function IntroExperience() {
@@ -211,13 +213,8 @@ export function IntroExperience() {
     window.setTimeout(() => router.push('/studio'), 640);
   }, [router]);
 
-  const requestEnter = useCallback(() => {
-    if (!user) {
-      setAuthOpen(true);
-      return;
-    }
-    enterStudio();
-  }, [enterStudio, user]);
+  // "进入工作台" is a snap to the second page, not a route jump.
+  const goToStudio = useCallback(() => goTo(SECTIONS.length - 1), [goTo]);
 
   return (
     <>
@@ -226,7 +223,7 @@ export function IntroExperience() {
       <WeaveCanvas className="pointer-events-none absolute inset-0 z-0 opacity-90" />
 
       <header className="pointer-events-none absolute inset-x-0 top-0 z-40">
-        <div className="pointer-events-auto mx-auto flex max-w-[1320px] items-center justify-between px-6 py-5 md:px-9 md:py-6">
+        <div className="pointer-events-auto mx-auto flex max-w-[1720px] items-center justify-between px-5 py-5 md:px-8 md:py-6">
           <button type="button" onClick={() => goTo(0)} className="flex items-center gap-3 text-ink">
             <Mark className="h-[26px] w-[26px]" />
             <span className="flex items-baseline gap-2.5">
@@ -278,7 +275,7 @@ export function IntroExperience() {
         className="pager no-scrollbar relative z-10 flex h-[100dvh] w-full overflow-x-auto overflow-y-hidden"
       >
         <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-          <SlideHero onEnter={requestEnter} onBrowse={() => goTo(1)} />
+          <SlideHero onEnter={goToStudio} onBrowse={() => goTo(1)} />
         </section>
         <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
           <SlideCapabilities />
@@ -287,7 +284,10 @@ export function IntroExperience() {
           <SlideProcess />
         </section>
         <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-          <SlideAbout onEnter={requestEnter} />
+          <SlideAbout onEnter={goToStudio} />
+        </section>
+        <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto">
+          <StudioHub onOpen={enterStudio} />
         </section>
       </div>
 
@@ -340,8 +340,13 @@ export function IntroExperience() {
 
           <span className="hidden h-5 w-px bg-[rgb(var(--line))] sm:block" />
 
-          <Button variant="primary" size="sm" onClick={requestEnter} className="rounded-full px-4">
-            进入工作台
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={index === SECTIONS.length - 1 ? enterStudio : goToStudio}
+            className="rounded-full px-4"
+          >
+            {index === SECTIONS.length - 1 ? '完整工作台' : '进入工作台'}
             <ArrowRight size={13} strokeWidth={2} />
           </Button>
         </div>

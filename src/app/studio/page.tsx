@@ -2,103 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import {
-  ArrowUpRight,
-  AudioLines,
-  BookOpen,
-  Clapperboard,
-  Frame,
-  PenLine,
-  Settings2,
-  Users,
-} from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { listProjects, relativeTime, type Project } from '@/lib/projects';
 import { useMounted } from '@/hooks/use-mounted';
 import { EmptyState } from '@/components/studio/workbench';
+import { KIND_HREF, KIND_LABEL, WORKBENCHES } from '@/lib/workbenches';
 import { cn } from '@/lib/cn';
-
-const TILES = [
-  {
-    href: '/studio/text',
-    index: '01',
-    title: '文本',
-    desc: '起草、重写、切换语气。流式输出，逐句可改。',
-    meta: 'draft · tone · memory',
-    icon: PenLine,
-    span: 'lg:col-span-2',
-  },
-  {
-    href: '/studio/image',
-    index: '02',
-    title: '图像',
-    desc: '提示词、比例、批量。未连接服务时给出程序化构图。',
-    meta: 'prompt · batch · archive',
-    icon: Frame,
-    span: '',
-  },
-  {
-    href: '/studio/video',
-    index: '03',
-    title: '影像',
-    desc: '导入片段，在时间线上裁切、排序、导出工程。',
-    meta: 'trim · sequence · edl',
-    icon: Clapperboard,
-    span: '',
-  },
-  {
-    href: '/studio/voice',
-    index: '04',
-    title: '声音',
-    desc: '浏览器内录音、波形走查、浏览器朗读。',
-    meta: 'record · waveform · tts',
-    icon: AudioLines,
-    span: '',
-  },
-  {
-    href: '/studio/story',
-    index: '05',
-    title: '故事',
-    desc: '把文字与画面排成分镜，一体导出。',
-    meta: 'panel · board · export',
-    icon: BookOpen,
-    span: '',
-  },
-  {
-    href: '/studio/social',
-    index: '06',
-    title: '社交',
-    desc: '用 UID 建立通讯录，同一浏览器多标签实时对话。',
-    meta: 'uid · contact · channel',
-    icon: Users,
-    span: 'lg:col-span-2',
-  },
-  {
-    href: '/studio/settings',
-    index: '07',
-    title: '设置',
-    desc: '端点、模型、密钥与记忆。全部存在本机。',
-    meta: 'endpoint · memory · data',
-    icon: Settings2,
-    span: '',
-  },
-];
-
-const KIND_LABEL: Record<string, string> = {
-  text: '文本',
-  image: '图像',
-  video: '影像',
-  voice: '声音',
-  story: '故事',
-};
-
-const KIND_HREF: Record<string, string> = {
-  text: '/studio/text',
-  image: '/studio/image',
-  video: '/studio/video',
-  voice: '/studio/voice',
-  story: '/studio/story',
-};
 
 export default function StudioOverview() {
   const { user } = useAuth();
@@ -147,15 +57,15 @@ export default function StudioOverview() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {TILES.map((tile) => {
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+        {WORKBENCHES.map((tile) => {
           const Icon = tile.icon;
           return (
             <Link
               key={tile.href}
               href={tile.href}
               className={cn(
-                'neu neu-press group relative flex min-h-[168px] flex-col overflow-hidden rounded-2xl p-6',
+                'neu neu-press group relative flex min-h-[182px] flex-col overflow-hidden rounded-2xl p-6',
                 tile.span,
               )}
             >
@@ -167,7 +77,7 @@ export default function StudioOverview() {
               </div>
 
               <div className="mt-5">
-                <h2 className="font-serif text-[20px] text-ink">{tile.title}</h2>
+                <h2 className="font-serif text-[21px] text-ink">{tile.title}</h2>
                 <p className="mt-1.5 max-w-[36ch] text-[11.5px] leading-[1.75] text-muted">{tile.desc}</p>
               </div>
 

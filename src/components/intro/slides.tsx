@@ -33,7 +33,7 @@ const MATERIALS = [
 
 export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse: () => void }) {
   return (
-    <div className="relative mx-auto grid h-full w-full max-w-[1180px] grid-cols-1 items-center gap-12 px-7 md:grid-cols-12 md:gap-14 md:px-10">
+    <div className="relative mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 items-center gap-12 px-5 md:grid-cols-12 md:gap-12 md:px-8">
       <div className="md:col-span-7">
         <motion.div variants={enter} custom={0} initial="hidden" animate="show">
           <Eyebrow>Multimodal workspace · 织境</Eyebrow>
@@ -44,7 +44,7 @@ export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse
           custom={1}
           initial="hidden"
           animate="show"
-          className="mt-7 font-serif text-[clamp(2.5rem,5.2vw,4.35rem)] font-normal leading-[1.12] tracking-[0.005em] text-ink text-balance"
+          className="mt-7 font-serif text-[clamp(2.7rem,4.9vw,5rem)] font-normal leading-[1.12] tracking-[0.005em] text-ink text-balance"
         >
           把散落的材料，
           <br />
@@ -56,7 +56,7 @@ export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse
           custom={2}
           initial="hidden"
           animate="show"
-          className="mt-7 max-w-[46ch] text-[14.5px] leading-[1.9] text-muted text-pretty"
+          className="mt-7 max-w-[52ch] text-[15px] leading-[1.9] text-muted text-pretty"
         >
           文字、画面、声音与时间，四种材料放在同一张工作台上。从一句提纲开始，到一支成片收尾，
           中间不必换工具，也不必把半成品搬来搬去。
@@ -111,7 +111,7 @@ export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse
             {MATERIALS.map((item) => (
               <div key={item.index} className="group flex items-baseline gap-4 py-3.5">
                 <span className="font-mono text-[10px] text-muted/60">{item.index}</span>
-                <span className="font-serif text-[17px] text-ink">{item.name}</span>
+                <span className="font-serif text-[18px] text-ink">{item.name}</span>
                 <span className="ml-auto text-[11.5px] tracking-wide text-muted/80">{item.detail}</span>
               </div>
             ))}
@@ -160,7 +160,7 @@ const CAPABILITIES = [
 
 export function SlideCapabilities() {
   return (
-    <div className="mx-auto grid h-full w-full max-w-[1180px] grid-cols-1 items-center gap-10 px-7 md:grid-cols-12 md:px-10">
+    <div className="mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 items-center gap-10 px-5 md:grid-cols-12 md:px-8">
       <div className="md:col-span-4">
         <Eyebrow>Capability</Eyebrow>
         <h2 className="mt-6 font-serif text-[clamp(1.9rem,3.2vw,2.7rem)] leading-[1.25] text-ink">
@@ -168,7 +168,7 @@ export function SlideCapabilities() {
           <br />
           一套工序。
         </h2>
-        <p className="mt-6 max-w-[34ch] text-[13.5px] leading-[1.9] text-muted">
+        <p className="mt-6 max-w-[38ch] text-[14px] leading-[1.9] text-muted">
           每种材料都有独立的编辑面，但共享同一个项目、同一份记忆、同一套导出规则。
           你不必为一个想法反复切换上下文。
         </p>
@@ -228,7 +228,7 @@ const STEPS = [
 
 export function SlideProcess() {
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1180px] flex-col justify-center px-7 md:px-10">
+    <div className="mx-auto flex h-full w-full max-w-[1560px] flex-col justify-center px-5 md:px-8">
       <Eyebrow>Workflow</Eyebrow>
 
       <div className="mt-6 flex flex-wrap items-end justify-between gap-6">
@@ -279,7 +279,7 @@ export function SlideProcess() {
 
 export function SlideAbout({ onEnter }: { onEnter: () => void }) {
   return (
-    <div className="mx-auto grid h-full w-full max-w-[1180px] grid-cols-1 content-center gap-12 px-7 md:grid-cols-12 md:px-10">
+    <div className="mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 content-center gap-12 px-5 md:grid-cols-12 md:px-8">
       <div className="md:col-span-7">
         <Eyebrow>About</Eyebrow>
         <h2 className="mt-6 font-serif text-[clamp(2rem,3.6vw,3.1rem)] leading-[1.22] text-ink text-balance">
@@ -287,7 +287,7 @@ export function SlideAbout({ onEnter }: { onEnter: () => void }) {
           <br />
           留在你的机器上。
         </h2>
-        <p className="mt-7 max-w-[48ch] text-[13.5px] leading-[1.95] text-muted text-pretty">
+        <p className="mt-7 max-w-[54ch] text-[14px] leading-[1.95] text-muted text-pretty">
           密钥与偏好写进浏览器的 IndexedDB，作品与记忆不出本机。端侧模型可以离线跑一个小模型兜底，
           服务端只在你主动配置时才参与。没有账号同步，没有遥测，也没有一张你不知道用途的埋点表。
         </p>
