@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion, useMotionValue, useSpring } from 'framer-motion';
 import { ArrowRight, LogIn } from 'lucide-react';
@@ -9,9 +9,17 @@ import { Mark } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { WeaveCanvas } from './weave-canvas';
+import { IntroBootSkeleton } from './boot-skeleton';
 import { FlightPath, PaperPlane } from './paper-plane';
 import { SlideAbout, SlideCapabilities, SlideHero, SlideProcess } from './slides';
 import { AuthDialog } from './auth-dialog';
+
+// Avoids the server-render warning that useLayoutEffect triggers during SSR.
+const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+const BOOT_KEY = 'loomscape:intro-booted';
+const BOOT_MIN_MS = 900;
+const BOOT_MAX_MS = 2600;
 
 const SECTIONS = [
   { id: 'intro', label: '简介' },
@@ -28,6 +36,12 @@ export function IntroExperience() {
   const router = useRouter();
   const { user, hydrate, ready } = useAuth();
 
+  // The curtain is part of the server output, so the first paint is a skeleton.
+  // A session flag stops it from replaying when the visitor comes back.
+  const [curtainMounted, setCurtainMounted] = useState(true);
+  const [curtainVisible, setCurtainVisible] = useState(true);
+  const [revealed, setRevealed] = useState(false);
+
   // Flight progress is written by the pager's own scroll handler; the spring
   // smooths out the difference between snap animation frames.
   const flightRaw = useMotionValue(0);
@@ -36,6 +50,60 @@ export function IntroExperience() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useIsoLayoutEffect(() => {
+    let seen = false;
+    try {
+      seen = window.sessionStorage.getItem(BOOT_KEY) === '1';
+    } catch {
+      seen = false;
+    }
+    if (seen) {
+      setCurtainMounted(false);
+      setCurtainVisible(false);
+      setRevealed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!curtainMounted || revealed) return;
+
+    let revealTimer = 0;
+    let unmountTimer = 0;
+    let done = false;
+    const startedAt = performance.now();
+
+    const reveal = () => {
+      if (done) return;
+      done = true;
+      setRevealed(true);
+      setCurtainVisible(false);
+      unmountTimer = window.setTimeout(() => {
+        setCurtainMounted(false);
+        try {
+          window.sessionStorage.setItem(BOOT_KEY, '1');
+        } catch {
+          // a blocked storage quota should not keep the curtain up
+        }
+      }, 520);
+    };
+
+    const waitForFonts = document.fonts?.ready ?? Promise.resolve();
+    waitForFonts
+      .catch(() => undefined)
+      .then(() => {
+        const elapsed = performance.now() - startedAt;
+        revealTimer = window.setTimeout(reveal, Math.max(BOOT_MIN_MS - elapsed, 0));
+      });
+
+    const guard = window.setTimeout(reveal, BOOT_MAX_MS);
+
+    return () => {
+      window.clearTimeout(revealTimer);
+      window.clearTimeout(unmountTimer);
+      window.clearTimeout(guard);
+    };
+  }, [curtainMounted, revealed]);
 
   const panels = useCallback(
     () => Array.from(scrollerRef.current?.children ?? []) as HTMLElement[],
@@ -136,7 +204,7 @@ export function IntroExperience() {
       el.removeEventListener('scroll', onScroll);
       window.removeEventListener('keydown', onKey);
     };
-  }, []);
+  }, [flightRaw]);
 
   const enterStudio = useCallback(() => {
     setLeaving(true);
@@ -152,7 +220,8 @@ export function IntroExperience() {
   }, [enterStudio, user]);
 
   return (
-    <main className="relative h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]">
+    <>
+      <main className="relative h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_18%_12%,rgba(255,255,255,0.9),transparent_58%),radial-gradient(90%_70%_at_88%_82%,rgba(176,122,74,0.07),transparent_62%)]" />
       <WeaveCanvas className="pointer-events-none absolute inset-0 z-0 opacity-90" />
 
@@ -318,6 +387,16 @@ export function IntroExperience() {
           </motion.div>
         ) : null}
       </AnimatePresence>
-    </main>
+      </main>
+
+      {curtainMounted ? (
+        <>
+          <IntroBootSkeleton visible={curtainVisible} />
+          <noscript>
+            <style>{`.boot-curtain{display:none!important}`}</style>
+          </noscript>
+        </>
+      ) : null}
+    </>
   );
 }
