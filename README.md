@@ -41,6 +41,8 @@
 
 **缓存判定看权重文件**。只缓存了 config 或 tokenizer 不算就绪，必须是当前量化对应的那个 `.onnx`（`model_quantized.onnx` / `model_q4.onnx`）。否则半途中断的下载会显示成「已缓存」，下次加载才在缺文件的地方失败。失败时卡片会显示真实原因，并提供「重试」「删除缓存并重试」——残缺的权重只有删掉重下才能修好。
 
+**下载前先看空间**。模型区会显示本机存储已用/配额；开始下载前用 `navigator.storage.estimate()` 预检，剩余空间不够就直接说明「已用多少 / 配额多少 / 还差多少」，而不是让浏览器在写缓存时抛一个只有一个数字的底层中断再显示出来。
+
 **同一时间只驻留一个**。加载第二个会先释放第一个的 ONNX session 与权重引用，再开始加载；连续点几个也只会留下最后一个，因为加载是串行的——两个加载并行时先完成的那个会被后来者悄悄留在内存里。因为一对一，加载文本模型会把嵌入引擎切回哈希，反之亦然。
 
 **WASM 多线程**。线程数取 `hardwareConcurrency - 1`，上限 4（矩阵乘不会线性加速，每个 worker 还要额外内存）。WASM 线程依赖 `SharedArrayBuffer`，而它只在跨源隔离的文档里存在，所以应用对所有路由下发 `Cross-Origin-Opener-Policy: same-origin` 与 `Cross-Origin-Embedder-Policy: credentialless`；`credentialless` 而不是 `require-corp`，是为了让工作台里的远程图片不需要额外 CORP 头。代理把这些头丢掉时线程数会回落到 1，面板里会注明原因。
