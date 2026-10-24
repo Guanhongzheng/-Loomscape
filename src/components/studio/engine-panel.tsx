@@ -35,6 +35,7 @@ import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
+import { describeError, looksLikeMemoryPressure } from '@/lib/errors';
 import { cn } from '@/lib/cn';
 
 type RuntimeFacts = { cores: number; isolated: boolean; threads: number };
@@ -61,7 +62,9 @@ export function EnginePanel() {
 
   const refresh = useCallback(async () => {
     const rows = await Promise.all(
-      ALL_LOCAL_MODELS.map(async (model) => [model.id, await isModelCached(model.repo)] as const),
+      ALL_LOCAL_MODELS.map(
+        async (model) => [model.id, await isModelCached(model.repo, model.dtype)] as const,
+      ),
     );
     setCached(Object.fromEntries(rows));
     setEmbedder(await activeEmbedder());
@@ -162,12 +165,9 @@ export function EnginePanel() {
         'success',
       );
     } catch (error) {
-      setModel(model.id, {
-        state: 'error',
-        progress: 0,
-        message: error instanceof Error ? error.message : '加载失败',
-      });
-      toast(error instanceof Error ? error.message : '加载失败', 'error');
+      const message = describeError(error);
+      setModel(model.id, { state: 'error', progress: 0, message });
+      toast(`${model.label} 加载失败：${message}`, 'error');
     }
   };
 
@@ -182,6 +182,14 @@ export function EnginePanel() {
     resetModel(model.id);
     await refresh();
     toast(removed > 0 ? `已删除 ${removed} 个缓存文件` : '没有找到缓存文件', 'info');
+  };
+
+  /** A truncated weight file survives as a cache hit; clearing it is the fix. */
+  const clearAndRetry = async (model: LocalModel) => {
+    await removeModel(model.repo);
+    resetModel(model.id);
+    await refresh();
+    await activate(model);
   };
 
   const chooseMode = async (task: 'text' | 'embedding', next: string) => {
@@ -481,7 +489,7 @@ export function EnginePanel() {
                     </span>
                   ) : ready ? (
                     <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-muted/55">
-                      cached
+                      已缓存
                     </span>
                   ) : null}
                 </div>
@@ -508,9 +516,26 @@ export function EnginePanel() {
                 ) : null}
 
                 {state?.state === 'error' ? (
-                  <div className="mt-3 flex items-start gap-1.5 text-[10px] leading-relaxed text-[#8c3b32]">
-                    <TriangleAlert size={11} className="mt-0.5 shrink-0" />
-                    {state.message ?? '加载失败'}
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-start gap-1.5 text-[10px] leading-relaxed text-[#8c3b32]">
+                      <TriangleAlert size={11} className="mt-0.5 shrink-0" />
+                      <span className="min-w-0 break-words">{state.message ?? '加载失败'}</span>
+                    </div>
+                    {looksLikeMemoryPressure(state.message ?? '') ? (
+                      <p className="text-[10px] leading-relaxed text-[#8c3b32]/75">
+                        更像内存或存储不足：先关掉占用大的标签页，再删掉缓存重试。
+                      </p>
+                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => void activate(model)}>
+                        重试
+                      </Button>
+                      {ready ? (
+                        <Button variant="ghost" size="sm" onClick={() => void clearAndRetry(model)}>
+                          删除缓存并重试
+                        </Button>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
 

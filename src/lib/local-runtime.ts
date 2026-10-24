@@ -1,6 +1,7 @@
 'use client';
 
 import { useModelRuntime, type Backend, type LocalModel, type ModelSource } from './engines';
+import { describeError } from './errors';
 
 /**
  * The browser bundle is served from /runtime and imported natively. Bundling it
@@ -301,7 +302,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
         state: 'error',
         progress: 0,
         backend,
-        message: error instanceof Error ? error.message : '模型加载失败',
+        message: describeError(error),
       });
     }
     throw error;
@@ -314,12 +315,31 @@ export async function loadModel(model: LocalModel, options: LoadOptions) {
 
 const CACHE_NAME = 'transformers-cache';
 
-export async function isModelCached(repo: string): Promise<boolean> {
+/**
+ * Which weight file a dtype resolves to. transformers.js picks the same names,
+ * so checking one of them is the only way to know that *this* model can run:
+ * a cached config, tokenizer, or a different quantisation would otherwise be
+ * reported as ready and the load would fail on a missing ONNX file.
+ */
+export function weightFile(dtype: 'q8' | 'q4'): string {
+  return dtype === 'q4' ? 'model_q4.onnx' : 'model_quantized.onnx';
+}
+
+export function isWeightRequest(url: string, repo: string, dtype: 'q8' | 'q4' = 'q8'): boolean {
+  if (!url.includes(repo)) return false;
+  try {
+    return new URL(url).pathname.endsWith(`/${weightFile(dtype)}`);
+  } catch {
+    return false;
+  }
+}
+
+export async function isModelCached(repo: string, dtype: 'q8' | 'q4' = 'q8'): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
-    return keys.some((request) => request.url.includes(repo));
+    return keys.some((request) => isWeightRequest(request.url, repo, dtype));
   } catch {
     return false;
   }

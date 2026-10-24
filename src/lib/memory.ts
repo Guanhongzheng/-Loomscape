@@ -111,7 +111,7 @@ export async function activeEmbedder(): Promise<EmbedderInfo> {
     if (model && isResident(model.id)) {
       return { tag: `local:${model.id}`, label: model.label, dims: model.dims };
     }
-    const cached = model ? await isModelCached(model.repo) : false;
+    const cached = model ? await isModelCached(model.repo, model.dtype) : false;
     return {
       tag: 'hash',
       label: cached ? `哈希（${model?.label ?? '本地模型'} 未加载）` : '哈希（模型未下载）',
