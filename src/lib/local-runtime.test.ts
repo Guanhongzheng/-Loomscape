@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isWeightRequest, runtimeInfo, threadCount } from '@/lib/local-runtime';
+import { dtypeFor, isWeightRequest, runtimeInfo, threadCount, weightFile } from '@/lib/local-runtime';
+import { LOCAL_TEXT, sizeFor } from '@/lib/engines';
 
 describe('threadCount', () => {
   it('leaves one core to the UI and caps at four', () => {
@@ -41,6 +42,29 @@ describe('runtimeInfo', () => {
   });
 });
 
+describe('dtype selection', () => {
+  const model = LOCAL_TEXT[0];
+
+  it('never asks WebGPU for fp32', () => {
+    // fp32 for these repos is a topology file plus a 2.1GB external-data blob,
+    // which is past the size a single Response can hold.
+    expect(dtypeFor(model, 'webgpu')).toBe('fp16');
+    expect(dtypeFor(model, 'wasm')).toBe('q8');
+  });
+
+  it('maps each dtype to a file the hub actually has', () => {
+    expect(weightFile('q8')).toBe('model_quantized.onnx');
+    expect(weightFile('fp16')).toBe('model_fp16.onnx');
+  });
+
+  it('quotes the size of the precision that will be fetched', () => {
+    expect(sizeFor(model, 'wasm')).toBe(model.sizesMB.q8);
+    expect(sizeFor(model, 'webgpu')).toBe(model.sizesMB.fp16);
+    expect(sizeFor(model, 'auto')).toBe(model.sizesMB.q8);
+    expect(sizeFor(model, 'webgpu')).toBeGreaterThan(sizeFor(model, 'wasm'));
+  });
+});
+
 describe('isWeightRequest', () => {
   const repo = 'onnx-community/Qwen2.5-0.5B-Instruct';
   const at = (file: string) => `https://modelscope.cn/models/${repo}/resolve/master/onnx/${file}`;
@@ -48,6 +72,11 @@ describe('isWeightRequest', () => {
   it('accepts the weight file that matches the dtype', () => {
     expect(isWeightRequest(at('model_quantized.onnx'), repo, 'q8')).toBe(true);
     expect(isWeightRequest(at('model_q4.onnx'), repo, 'q4')).toBe(true);
+  });
+
+  it('accepts fp16 for the WebGPU path', () => {
+    expect(isWeightRequest(at('model_fp16.onnx'), repo, 'fp16')).toBe(true);
+    expect(isWeightRequest(at('model_fp16.onnx'), repo, 'q8')).toBe(false);
   });
 
   it('rejects a different quantisation', () => {

@@ -9,11 +9,14 @@ import { useAuth } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
 import { ALL_LOCAL_MODELS, findModel, useEngines, useModelRuntime } from '@/lib/engines';
 import { describeError } from '@/lib/errors';
-import { isModelCached, loadModel } from '@/lib/local-runtime';
+import { detectBackend, dtypeFor, isModelCached, loadModel } from '@/lib/local-runtime';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
 import { DOCK } from '@/lib/workbenches';
+
+/** Failures that come from hitting a browser limit rather than from our code. */
+const RUNTIME_LIMIT = /Response|ArrayBuffer|supported range|out of memory|RangeError|WebAssembly/i;
 
 /**
  * The workspace splits its navigation in two: a thin top bar carrying the
@@ -85,7 +88,11 @@ export function StudioShell({
     if (!candidate) return;
 
     void (async () => {
-      if (!(await isModelCached(candidate.repo, candidate.dtype))) return;
+      // The precision depends on the backend that will actually run, not on
+      // the preference: a WebGPU pick needs fp16, and downloading it silently
+      // on entry is exactly what this guard exists to avoid.
+      const backend = await detectBackend(prefs.backend);
+      if (!(await isModelCached(candidate.repo, dtypeFor(candidate, backend)))) return;
 
       // A decoder session peaks in the gigabytes. On a 4GB device that is the
       // difference between a workspace and a crashed tab, so leave it to an
@@ -107,6 +114,24 @@ export function StudioShell({
       }
     })();
   }, [prefsLoaded, resident, prefs]);
+
+  /**
+   * onnxruntime spawns async work of its own, so a hard failure can surface as
+   * a rejection nothing in our call stack awaits — that is how a RangeError
+   * from inside the bundle ended up as a full-page overlay. Catch the ones
+   * that mean "this model cannot run here" and say so in place.
+   */
+  useEffect(() => {
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const text = describeError(event.reason);
+      if (!RUNTIME_LIMIT.test(text)) return;
+      console.error('[loomscape] local runtime rejected', event.reason);
+      event.preventDefault();
+      toast(`本地模型运行时出错：${text}`, 'error');
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => window.removeEventListener('unhandledrejection', onRejection);
+  }, []);
 
   const online = health.text || health.image || health.speech;
   const progress = active ? Math.round((models[active.id]?.progress ?? 0) * 100) : 0;

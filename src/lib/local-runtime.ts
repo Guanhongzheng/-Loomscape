@@ -1,6 +1,12 @@
 'use client';
 
-import { useModelRuntime, type Backend, type LocalModel, type ModelSource } from './engines';
+import {
+  useModelRuntime,
+  type Backend,
+  type LocalModel,
+  type ModelDtype,
+  type ModelSource,
+} from './engines';
 import { describeError } from './errors';
 
 /**
@@ -99,10 +105,9 @@ const pipelineTask = (task: 'embedding' | 'text') =>
   task === 'embedding' ? 'feature-extraction' : 'text-generation';
 
 /**
- * Auto mode stays on WASM with quantized weights: the WebGPU provider needs
- * fp32 weights, which quadruples the download for a half-billion parameter
- * model. WebGPU stays available as an explicit choice for people who want the
- * faster path and can afford the bandwidth.
+ * Auto mode stays on WASM with int8 weights: it is the smallest download and
+ * the most predictable across GPUs. WebGPU stays an explicit choice, and it
+ * runs fp16 — see dtypeFor for why it must not ask for fp32.
  */
 export async function detectBackend(preference: 'auto' | Backend): Promise<Backend> {
   if (preference === 'auto') return 'wasm';
@@ -148,8 +153,14 @@ type Resident = {
  */
 let resident: Resident | null = null;
 
-function dtypeFor(model: LocalModel, backend: Backend): string {
-  return backend === 'webgpu' ? 'fp32' : model.dtype;
+/**
+ * WebGPU runs fp16, never fp32. The fp32 graph for these repos is a 0.6MB
+ * topology plus a 2.1GB external-data file, which is both a much larger
+ * download and past the point where a single ArrayBuffer can be wrapped in a
+ * Response — that is the RangeError the runtime used to throw.
+ */
+export function dtypeFor(model: LocalModel, backend: Backend): ModelDtype {
+  return backend === 'webgpu' ? 'fp16' : model.dtype;
 }
 
 async function dispose(pipe: unknown): Promise<void> {
@@ -338,11 +349,16 @@ const CACHE_NAME = 'transformers-cache';
  * a cached config, tokenizer, or a different quantisation would otherwise be
  * reported as ready and the load would fail on a missing ONNX file.
  */
-export function weightFile(dtype: 'q8' | 'q4'): string {
-  return dtype === 'q4' ? 'model_q4.onnx' : 'model_quantized.onnx';
+export function weightFile(dtype: ModelDtype | 'q4'): string {
+  if (dtype === 'q4') return 'model_q4.onnx';
+  return dtype === 'fp16' ? 'model_fp16.onnx' : 'model_quantized.onnx';
 }
 
-export function isWeightRequest(url: string, repo: string, dtype: 'q8' | 'q4' = 'q8'): boolean {
+export function isWeightRequest(
+  url: string,
+  repo: string,
+  dtype: ModelDtype | 'q4' = 'q8',
+): boolean {
   if (!url.includes(repo)) return false;
   try {
     return new URL(url).pathname.endsWith(`/${weightFile(dtype)}`);
@@ -354,8 +370,9 @@ export function isWeightRequest(url: string, repo: string, dtype: 'q8' | 'q4' = 
 export type CacheStats = {
   files: number;
   bytes: number;
-  /** The weight file this dtype needs is present. */
-  weights: boolean;
+  /** Weight files that are on disk, by the backend that can run them. */
+  q8: boolean;
+  fp16: boolean;
 };
 
 /**
@@ -365,7 +382,7 @@ export type CacheStats = {
  */
 export async function scanModelCache(models: LocalModel[]): Promise<Record<string, CacheStats>> {
   const result: Record<string, CacheStats> = {};
-  for (const model of models) result[model.id] = { files: 0, bytes: 0, weights: false };
+  for (const model of models) result[model.id] = { files: 0, bytes: 0, q8: false, fp16: false };
 
   if (typeof caches === 'undefined') return result;
 
@@ -377,7 +394,8 @@ export async function scanModelCache(models: LocalModel[]): Promise<Record<strin
         if (!request.url.includes(model.repo)) continue;
         const row = result[model.id];
         row.files += 1;
-        if (isWeightRequest(request.url, model.repo, model.dtype)) row.weights = true;
+        if (isWeightRequest(request.url, model.repo, 'q8')) row.q8 = true;
+        if (isWeightRequest(request.url, model.repo, 'fp16')) row.fp16 = true;
 
         const response = await cache.match(request);
         const length = Number(response?.headers.get('content-length') ?? 0);
@@ -403,7 +421,21 @@ export async function hasRepoCache(repo: string): Promise<boolean> {
   }
 }
 
-export async function isModelCached(repo: string, dtype: 'q8' | 'q4' = 'q8'): Promise<boolean> {
+export async function hasWeights(repo: string): Promise<boolean> {
+  if (typeof caches === 'undefined') return false;
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const keys = await cache.keys();
+    return keys.some(
+      (request) =>
+        isWeightRequest(request.url, repo, 'q8') || isWeightRequest(request.url, repo, 'fp16'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function isModelCached(repo: string, dtype: ModelDtype | 'q4' = 'q8'): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
   try {
     const cache = await caches.open(CACHE_NAME);

@@ -7,17 +7,31 @@ export type EngineTask = 'embedding' | 'text';
 export type ModelSource = 'modelscope' | 'huggingface';
 export type Backend = 'webgpu' | 'wasm';
 
+/** The precision that actually ships for a backend. */
+export type ModelDtype = 'q8' | 'fp16';
+
 export type LocalModel = {
   id: string;
   repo: string;
   task: EngineTask;
   label: string;
   note: string;
-  dtype: 'q8' | 'q4';
-  sizeMB: number;
+  /** Precision used on the WASM path; WebGPU always resolves to fp16. */
+  dtype: ModelDtype;
+  /** Real weight sizes on the hub, so the card cannot promise the wrong number. */
+  sizesMB: Record<ModelDtype, number>;
   dims?: number;
   languages: string;
 };
+
+/**
+ * What a download will actually weigh. WebGPU runs fp16 rather than fp32: the
+ * fp32 graph for these repos ships as an external-data file, which doubles the
+ * download again and trips the 2GB ceiling of `new Response(buffer)`.
+ */
+export function sizeFor(model: LocalModel, backend: 'auto' | Backend): number {
+  return backend === 'webgpu' ? model.sizesMB.fp16 : model.sizesMB.q8;
+}
 
 export const LOCAL_EMBEDDINGS: LocalModel[] = [
   {
@@ -27,7 +41,7 @@ export const LOCAL_EMBEDDINGS: LocalModel[] = [
     label: 'BGE Small 中文',
     note: '中文短文本检索，体积最小，冷启动最快',
     dtype: 'q8',
-    sizeMB: 24,
+    sizesMB: { q8: 23, fp16: 45 },
     dims: 512,
     languages: '中文',
   },
@@ -38,7 +52,7 @@ export const LOCAL_EMBEDDINGS: LocalModel[] = [
     label: 'E5 Small 多语',
     note: '中英混排稳定，适合跨语言作品库',
     dtype: 'q8',
-    sizeMB: 118,
+    sizesMB: { q8: 113, fp16: 224 },
     dims: 384,
     languages: '多语',
   },
@@ -47,9 +61,9 @@ export const LOCAL_EMBEDDINGS: LocalModel[] = [
     repo: 'Xenova/bge-m3',
     task: 'embedding',
     label: 'BGE-M3',
-    note: '多语言长文本，召回质量最好，体积最大',
+    note: '多语言长文本，召回质量最好；WebGPU 需 1.1GB，低内存设备不建议',
     dtype: 'q8',
-    sizeMB: 570,
+    sizesMB: { q8: 543, fp16: 1082 },
     dims: 1024,
     languages: '多语',
   },
@@ -61,9 +75,9 @@ export const LOCAL_TEXT: LocalModel[] = [
     repo: 'onnx-community/Qwen2.5-0.5B-Instruct',
     task: 'text',
     label: 'Qwen2.5 0.5B',
-    note: '端侧起草，首次加载约 490MB，之后离线可用',
+    note: '端侧起草，WASM 约 490MB；WebGPU 换 fp16 约 950MB',
     dtype: 'q8',
-    sizeMB: 490,
+    sizesMB: { q8: 488, fp16: 951 },
     languages: '中英',
   },
 ];

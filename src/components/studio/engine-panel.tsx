@@ -19,12 +19,15 @@ import { toast } from '@/components/ui/toast';
 import {
   ALL_LOCAL_MODELS,
   formatBytes,
+  sizeFor,
   useEngines,
   useModelRuntime,
+  type Backend,
   type LocalModel,
 } from '@/lib/engines';
 import {
   backendLabel,
+  dtypeFor,
   loadModel,
   removeModel,
   runtimeInfo,
@@ -138,9 +141,9 @@ export function EnginePanel() {
 
     // Only the weights that are not on disk need room; a cached model just
     // needs to be parsed into memory.
-    if (!cache[model.id]?.weights) {
+    if (!cache[model.id]?.[dtypeFor(model, backend)]) {
       const now = await storageUsage();
-      const need = model.sizeMB * 1024 * 1024;
+      const need = sizeFor(model, backend) * 1024 * 1024;
       if (!roomFor(now, need)) {
         const detail = now
           ? `已用 ${formatBytes(now.used)} / 配额 ${formatBytes(now.quota)}，还差约 ${formatBytes(
@@ -225,7 +228,9 @@ export function EnginePanel() {
       }
       await patch({ textMode: 'local' });
       const model = ALL_LOCAL_MODELS.find((item) => item.task === 'text' && item.id === prefs.textModelId);
-      if (model && resident?.modelId !== model.id && cache[model.id]?.weights) await activate(model);
+      if (model && resident?.modelId !== model.id && cache[model.id]?.[dtypeOn(model)]) {
+        await activate(model);
+      }
       return;
     }
 
@@ -235,11 +240,18 @@ export function EnginePanel() {
     const model = ALL_LOCAL_MODELS.find(
       (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
     );
-    if (model && resident?.modelId !== model.id && cache[model.id]?.weights) await activate(model);
+    if (model && resident?.modelId !== model.id && cache[model.id]?.[dtypeOn(model)]) {
+      await activate(model);
+    }
   };
 
   const preset = PRESETS.text.find((item) => item.id === draft.preset);
-  const textReady = cache[prefs.textModelId]?.weights;
+  // "auto" resolves to WASM, so the effective backend is known without asking
+  // the adapter; this is what the download size and the cache check key off.
+  const backend: Backend = prefs.backend === 'webgpu' ? 'webgpu' : 'wasm';
+  const dtypeOn = (model: LocalModel) => dtypeFor(model, backend);
+  const textModel = ALL_LOCAL_MODELS.find((item) => item.id === prefs.textModelId);
+  const textReady = textModel ? cache[textModel.id]?.[dtypeOn(textModel)] : false;
   const cloudReady = hasKey(draft);
   const loadingModel = ALL_LOCAL_MODELS.find((item) => models[item.id]?.state === 'downloading');
   const usedPercent = usage && usage.quota > 0 ? Math.round(usage.ratio * 100) : 0;
@@ -320,7 +332,7 @@ export function EnginePanel() {
               className="h-9 text-[11.5px]"
             >
               <option value="auto">自动 · WASM 量化（体积最小）</option>
-              <option value="webgpu">WebGPU · fp32（更快，约 4 倍体积）</option>
+              <option value="webgpu">WebGPU · fp16（推理更快，权重约为 int8 的两倍）</option>
               <option value="wasm">WASM · 量化</option>
             </Select>
           </div>
@@ -489,10 +501,14 @@ export function EnginePanel() {
             const state = models[model.id];
             const stats = cache[model.id];
             const loadedNow = resident?.modelId === model.id;
+            const dtype = dtypeOn(model);
+            const other = dtype === 'q8' ? 'fp16' : 'q8';
             // A just-loaded model is ready even if the cache scan ran a beat
             // too early to see its weight file.
-            const ready = (stats?.weights ?? false) || loadedNow;
-            const leftovers = !ready && (stats?.files ?? 0) > 0;
+            const ready = (stats?.[dtype] ?? false) || loadedNow;
+            // The other precision is on disk but this backend cannot run it.
+            const otherReady = !ready && (stats?.[other] ?? false);
+            const leftovers = !ready && !otherReady && (stats?.files ?? 0) > 0;
             const size = stats?.bytes ?? 0;
             const loading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
@@ -519,7 +535,10 @@ export function EnginePanel() {
                     <div className="mt-1.5 flex flex-wrap items-center gap-2 font-mono text-[9.5px] text-muted/55">
                       <span>{model.repo}</span>
                       <span>·</span>
-                      <span>约 {model.sizeMB} MB</span>
+                      <span>
+                        约 {formatBytes(sizeFor(model, backend) * 1024 * 1024)}
+                        {backend === 'webgpu' ? ' · fp16' : ' · int8'}
+                      </span>
                       <span>·</span>
                       <span>{model.languages}</span>
                     </div>
@@ -533,6 +552,10 @@ export function EnginePanel() {
                   ) : ready ? (
                     <span className="shrink-0 font-mono text-[9px] tracking-wide text-muted/55">
                       已下载{size > 0 ? ` · ${formatBytes(size)}` : ''}
+                    </span>
+                  ) : otherReady ? (
+                    <span className="shrink-0 font-mono text-[9px] tracking-wide text-muted/50">
+                      已下载 {other === 'q8' ? 'int8' : 'fp16'} 权重
                     </span>
                   ) : leftovers ? (
                     <span className="shrink-0 font-mono text-[9px] tracking-wide text-muted/45">
