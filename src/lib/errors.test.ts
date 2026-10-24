@@ -28,6 +28,13 @@ describe('describeError', () => {
     expect(describeError('failed to fetch')).toBe('failed to fetch');
   });
 
+  it('labels a bare numeric abort instead of printing digits alone', () => {
+    // onnxruntime can throw a number on a failed allocation or a full quota.
+    const text = describeError(4000449976);
+    expect(text).toContain('4000449976');
+    expect(text).toContain('错误码');
+  });
+
   it('never returns an empty label', () => {
     expect(describeError(null)).toBe('未知错误');
     expect(describeError(undefined)).toBe('未知错误');

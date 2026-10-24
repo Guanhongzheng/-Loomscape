@@ -20,6 +20,12 @@ export function describeError(error: unknown): string {
     }
   }
 
+  // onnxruntime aborts with a bare number (an address or a quota) on some
+  // failures; printing it alone looks like a rendering bug, so label it.
+  if (typeof error === 'number') {
+    return `错误码 ${error}（常见于存储空间或内存不足）`;
+  }
+
   const text = String(error ?? '').trim();
   return text && text !== '[object Object]' ? text : '未知错误';
 }

@@ -37,6 +37,7 @@ import { useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
 import { describeError, looksLikeMemoryPressure } from '@/lib/errors';
+import { roomFor, storageUsage, type StorageUsage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
 
 type RuntimeFacts = { cores: number; isolated: boolean; threads: number };
@@ -58,11 +59,13 @@ export function EnginePanel() {
   const [draft, setDraft] = useState<Endpoint>(endpoints.text);
   const [testing, setTesting] = useState(false);
   const [cache, setCache] = useState<Record<string, CacheStats>>({});
+  const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
   const refresh = useCallback(async () => {
     setCache(await scanModelCache(ALL_LOCAL_MODELS));
+    setUsage(await storageUsage());
     setEmbedder(await activeEmbedder());
   }, []);
 
@@ -130,6 +133,25 @@ export function EnginePanel() {
    */
   const activate = async (model: LocalModel) => {
     const previous = ALL_LOCAL_MODELS.find((item) => item.id === resident?.modelId);
+
+    // Only the weights that are not on disk need room; a cached model just
+    // needs to be parsed into memory.
+    if (!cache[model.id]?.weights) {
+      const now = await storageUsage();
+      const need = model.sizeMB * 1024 * 1024;
+      if (!roomFor(now, need)) {
+        const detail = now
+          ? `已用 ${formatBytes(now.used)} / 配额 ${formatBytes(now.quota)}，还差约 ${formatBytes(
+              Math.max(need - now.free, 0),
+            )}`
+          : '浏览器没有报告可用空间';
+        const message = `存储空间不足：${detail}。先清理旧权重或删掉不用的模型。`;
+        setModel(model.id, { state: 'error', progress: 0, message });
+        toast(`${model.label} 未开始下载：空间不足`, 'error');
+        return;
+      }
+    }
+
     setModel(model.id, { state: 'downloading', progress: 0, message: undefined });
     try {
       await loadModel(model, {
@@ -153,6 +175,9 @@ export function EnginePanel() {
       );
 
       await refresh();
+      // Cache writes land slightly after the session resolves; a second scan
+      // stops the card from flashing 旧权重 for files it just downloaded.
+      window.setTimeout(() => void refresh(), 1200);
       const info = runtimeInfo();
       const backend = useModelRuntime.getState().resident?.backend;
       const replaced = previous && previous.id !== model.id ? `，已卸载 ${previous.label}` : '';
@@ -213,6 +238,7 @@ export function EnginePanel() {
   const textReady = cache[prefs.textModelId]?.weights;
   const cloudReady = hasKey(draft);
   const loadingModel = ALL_LOCAL_MODELS.find((item) => models[item.id]?.state === 'downloading');
+  const usedPercent = usage && usage.quota > 0 ? Math.round(usage.ratio * 100) : 0;
   const loadingState = loadingModel ? models[loadingModel.id] : undefined;
 
   return (
@@ -430,15 +456,17 @@ export function EnginePanel() {
               卸载
             </Button>
           ) : null}
-          <span
-            className={cn(
-              'text-[10.5px] leading-relaxed text-muted/65',
-              resident ? 'w-full' : 'w-full',
-            )}
-          >
+          <span className="w-full text-[10.5px] leading-relaxed text-muted/65">
             同一时间只驻留一个模型，加载另一个会先卸载当前的。当前环境：{facts?.cores ?? '—'} 核 ·
             WASM {facts?.threads ?? 1} 线程
             {facts && !facts.isolated ? '（未开启跨源隔离，只能单线程）' : ''}。
+            {usage ? (
+              <>
+                {' '}
+                本机存储已用 {formatBytes(usage.used)} / {formatBytes(usage.quota)}（{usedPercent}%）
+                {usage.ratio > 0.9 ? '，空间紧张，先清理旧权重' : ''}。
+              </>
+            ) : null}
           </span>
         </div>
 
@@ -446,12 +474,14 @@ export function EnginePanel() {
           {ALL_LOCAL_MODELS.map((model) => {
             const state = models[model.id];
             const stats = cache[model.id];
-            const ready = stats?.weights ?? false;
+            const loadedNow = resident?.modelId === model.id;
+            // A just-loaded model is ready even if the cache scan ran a beat
+            // too early to see its weight file.
+            const ready = (stats?.weights ?? false) || loadedNow;
             const leftovers = !ready && (stats?.files ?? 0) > 0;
             const size = stats?.bytes ?? 0;
             const loading = state?.state === 'downloading';
             const percent = Math.round((state?.progress ?? 0) * 100);
-            const loadedNow = resident?.modelId === model.id;
 
             return (
               <div
