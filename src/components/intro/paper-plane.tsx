@@ -20,7 +20,7 @@ export function PaperPlane({ progress }: { progress: MotionValue<number> }) {
   return (
     <motion.div
       aria-hidden="true"
-      className="pointer-events-none fixed z-30 h-12 w-12 will-change-transform"
+      className="pointer-events-none absolute z-30 h-12 w-12 will-change-transform"
       style={{ left, top, rotate, scale, opacity }}
     >
       <div className="animate-float">
@@ -56,7 +56,7 @@ export function FlightPath({ progress }: { progress: MotionValue<number> }) {
   return (
     <svg
       aria-hidden="true"
-      className="pointer-events-none fixed inset-0 z-20 h-full w-full"
+      className="pointer-events-none absolute inset-0 z-20 h-full w-full"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >

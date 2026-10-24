@@ -21,7 +21,7 @@ import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
 
 const NAV = [
-  { href: '/studio', label: '总览', icon: LayoutGrid },
+  { href: '/studio', label: '总览', icon: LayoutGrid, overview: true },
   { href: '/studio/text', label: '文本', icon: PenLine },
   { href: '/studio/image', label: '图像', icon: Frame },
   { href: '/studio/video', label: '影像', icon: Clapperboard },
@@ -31,7 +31,17 @@ const NAV = [
   { href: '/studio/settings', label: '设置', icon: Settings2 },
 ];
 
-export function StudioShell({ children }: { children: React.ReactNode }) {
+export function StudioShell({
+  children,
+  overviewHref = '/#workspace',
+  homeHref = '/',
+  onHome,
+}: {
+  children: React.ReactNode;
+  overviewHref?: string;
+  homeHref?: string;
+  onHome?: () => void;
+}) {
   const pathname = usePathname();
   const { user, ready, hydrate, logout, enterAsGuest } = useAuth();
   const load = useEndpoints((state) => state.load);
@@ -67,13 +77,15 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
             Workspace
           </div>
           {NAV.map((item) => {
-            const active =
-              item.href === '/studio' ? pathname === '/studio' : pathname.startsWith(item.href);
+            const href = item.overview ? overviewHref : item.href;
+            const active = item.overview
+              ? pathname === '/studio' || overviewHref.startsWith('#')
+              : pathname.startsWith(item.href);
             const Icon = item.icon;
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={href}
                 className={cn(
                   'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] transition-all duration-300 ease-weave',
                   active
@@ -145,12 +157,14 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
 
           <nav className="no-scrollbar flex flex-1 items-center gap-1 overflow-x-auto md:hidden">
             {NAV.map((item) => {
-              const active =
-                item.href === '/studio' ? pathname === '/studio' : pathname.startsWith(item.href);
+              const href = item.overview ? overviewHref : item.href;
+              const active = item.overview
+                ? pathname === '/studio' || overviewHref.startsWith('#')
+                : pathname.startsWith(item.href);
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={href}
                   className={cn(
                     'shrink-0 rounded-full px-3 py-1.5 text-[12px] transition-colors',
                     active ? 'bg-[rgb(var(--surface))] text-ink shadow-[var(--shadow-neu-sm)]' : 'text-muted',
@@ -168,7 +182,8 @@ export function StudioShell({ children }: { children: React.ReactNode }) {
             </span>
             <span className="h-4 w-px bg-[rgb(var(--line))]" />
             <Link
-              href="/"
+              href={homeHref}
+              onClick={() => onHome?.()}
               className="text-[12px] text-muted transition-colors hover:text-ink"
             >
               回到首页
