@@ -98,9 +98,16 @@ async function launch() {
 async function run() {
   // The curtain is rendered on the server, so the very first byte already
   // contains the skeleton rather than a half-styled document.
-  const html = await (await fetch(base + '/')).text();
+  const home = await fetch(base + '/');
+  const html = await home.text();
   check('SSR 首帧包含骨架幕布', html.includes('boot-curtain'));
   check('骨架节点已服务端渲染', (html.match(/skeleton/g) ?? []).length > 10);
+  check(
+    '响应头开启跨源隔离',
+    home.headers.get('cross-origin-opener-policy') === 'same-origin' &&
+      home.headers.get('cross-origin-embedder-policy') === 'credentialless',
+    `coop=${home.headers.get('cross-origin-opener-policy')} coep=${home.headers.get('cross-origin-embedder-policy')}`,
+  );
 
   const browser = await launch();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -203,6 +210,35 @@ async function run() {
 
   const dataError = errors.some((line) => /DataError|key path/i.test(line));
   check('保存过程没有 DataError', !dataError, errors.find((line) => /DataError/i.test(line)) ?? '');
+
+  const isolation = await page.evaluate(() => ({
+    isolated: globalThis.crossOriginIsolated === true,
+    shared: typeof SharedArrayBuffer === 'function',
+    cores: navigator.hardwareConcurrency ?? 0,
+  }));
+  check(
+    '页面已跨源隔离且可用 SharedArrayBuffer',
+    isolation.isolated && isolation.shared,
+    `cores=${isolation.cores}`,
+  );
+
+  const engineUi = await page.evaluate(() => {
+    const text = document.body.innerText;
+    const buttons = Array.from(document.querySelectorAll('button'))
+      .map((button) => button.innerText.trim())
+      .filter(Boolean);
+    return {
+      resident: text.includes('驻留模型'),
+      idle: text.includes('驻留模型') && text.includes('无'),
+      setCurrent: text.includes('设为当前'),
+      loadButtons: buttons.filter((label) => /^(加载|下载并加载)$/.test(label)).length,
+      threads: /\d+ 线程/.test(text),
+    };
+  });
+  check('本地模型区显示驻留状态', engineUi.resident && engineUi.idle);
+  check('已移除「设为当前」', !engineUi.setCurrent);
+  check('每个本地模型都有加载入口', engineUi.loadButtons >= 3, `buttons=${engineUi.loadButtons}`);
+  check('显示 WASM 线程数', engineUi.threads);
 
   // The text workbench reads its engine from settings only.
   await page.goto(base + '/studio/text', { waitUntil: 'networkidle' });
