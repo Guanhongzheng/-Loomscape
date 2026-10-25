@@ -213,13 +213,15 @@ export function StudioShell({
           </span>
         )}
 
+        {/* The wordmark already leads home, so the arrow only earns its space
+            once there is room for the label next to it. */}
         <Link
           href={home}
           onClick={() => onHome?.()}
-          className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11.5px] text-muted transition-colors hover:text-ink"
+          className="hidden items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11.5px] text-muted transition-colors hover:text-ink sm:flex"
         >
           <ArrowLeft size={12.5} strokeWidth={1.8} />
-          <span className="hidden sm:inline">返回首页</span>
+          返回首页
         </Link>
 
         <span className="hidden h-4 w-px bg-[rgb(var(--line))] sm:block" />
@@ -236,7 +238,7 @@ export function StudioShell({
             </button>
           ) : null}
 
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgb(var(--sunken))] font-mono text-[11px] text-ink/70 shadow-[var(--shadow-inset-sm)]">
+          <span className="hidden h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgb(var(--sunken))] font-mono text-[11px] text-ink/70 shadow-[var(--shadow-inset-sm)] sm:grid">
             {user ? user.handle.slice(0, 1).toUpperCase() : '·'}
           </span>
           <div className="hidden min-w-0 leading-tight lg:block">

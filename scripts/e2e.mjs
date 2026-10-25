@@ -228,8 +228,8 @@ async function run() {
       .map((button) => button.innerText.trim())
       .filter(Boolean);
     return {
-      resident: text.includes('驻留模型'),
-      idle: text.includes('驻留模型') && text.includes('无'),
+      resident: text.includes('内存中'),
+      idle: text.includes('内存中') && text.includes('无'),
       setCurrent: text.includes('设为当前'),
       loadButtons: buttons.filter((label) => /^(加载|下载并加载)$/.test(label)).length,
       threads: /\d+ 线程/.test(text),

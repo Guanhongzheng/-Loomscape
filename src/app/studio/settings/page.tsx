@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   Check,
+  ChevronDown,
   Download,
   Eye,
   EyeOff,
@@ -32,6 +33,7 @@ import {
   type MemoryRecord,
 } from '@/lib/memory';
 import { STORES, all, clear } from '@/lib/db';
+import { formatBytes } from '@/lib/engines';
 import { relativeTime } from '@/lib/projects';
 import { cn } from '@/lib/cn';
 
@@ -65,6 +67,9 @@ export default function SettingsPage() {
   const [memories, setMemories] = useState<MemoryRecord[]>([]);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);
   const [wipeOpen, setWipeOpen] = useState(false);
+  // Collapsed by default: three four-field forms on one screen was the main
+  // reason this page read as a wall of inputs.
+  const [openChannel, setOpenChannel] = useState<Channel | null>(null);
 
   useEffect(() => {
     setDrafts(endpoints);
@@ -163,136 +168,136 @@ export default function SettingsPage() {
     window.location.href = '/';
   };
 
-  const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-
   return (
     <div>
       <WorkbenchHeader
         index="08"
         title="设置"
-        description="端点、密钥与记忆都在这一页。保存后写入 IndexedDB，不上传服务器；服务端环境变量配置的端点会以只读形式生效。"
-        actions={
-          <Button variant="soft" size="sm" onClick={exportAll}>
-            <Download size={13} />
-            导出数据
-          </Button>
-        }
+        description="端点、密钥、记忆与本地模型都在这一页，只写入本机浏览器。"
       />
 
       <div className="space-y-5">
-        <Panel title="AI 引擎" hint="文本与嵌入分别选择云端或本地，本地权重存于浏览器">
-          <EnginePanel />
-        </Panel>
+        <EnginePanel />
 
-        <Panel title="其它端点" hint="文本引擎在上方配置；这里管嵌入、图像与语音">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Panel title="其它端点" hint="嵌入、图像与语音通道；文本引擎在上方配置">
+          <div className="divide-y divide-[rgb(var(--line))]/45">
             {CHANNELS.map((channel) => {
               const draft = drafts[channel.id];
               const preset = PRESETS[channel.id].find((item) => item.id === draft.preset);
               const ready = channelReady({ endpoints, health }, channel.id);
               const clientReady = hasKey(draft);
+              const open = openChannel === channel.id;
 
               return (
-                <div key={channel.id} className="rounded-xl p-4 shadow-[var(--shadow-inset-sm)]">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-serif text-[16px] text-ink">{channel.title}</h3>
-                      <p className="mt-0.5 text-[10.5px] text-muted/70">{channel.note}</p>
-                    </div>
-                    <span
-                      className={cn(
-                        'mt-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em]',
-                        ready ? 'text-[#3f6b4f]' : 'text-muted/60',
-                      )}
-                    >
+                <div key={channel.id}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenChannel(open ? null : channel.id)}
+                    aria-expanded={open}
+                    className="flex w-full items-center gap-3 py-3 text-left"
+                  >
+                    <span className="w-10 shrink-0 text-[12px] text-ink/85">{channel.title}</span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-muted/70">
+                      {channel.note}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5 text-[10.5px] text-muted/70">
                       <span
                         className={cn(
                           'h-1.5 w-1.5 rounded-full',
-                          ready ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]',
+                          ready ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]/70',
                         )}
                       />
-                      {ready ? 'ready' : 'offline'}
+                      {ready ? '已连接' : '未配置'}
                     </span>
-                  </div>
-
-                  <div className="mt-4 space-y-3">
-                    <div>
-                      <label className="mb-1.5 block text-[10.5px] text-muted">服务商</label>
-                      <Select
-                        value={draft.preset}
-                        onChange={(event) => applyPreset(channel.id, event.target.value)}
-                        className="h-9 text-[12px]"
-                      >
-                        {PRESETS[channel.id].map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-
-                    <div>
-                      <label className="mb-1.5 block text-[10.5px] text-muted">Base URL</label>
-                      <Input
-                        value={draft.baseUrl}
-                        onChange={(event) => update(channel.id, { baseUrl: event.target.value })}
-                        placeholder="https://api.example.com/v1"
-                        className="h-9 font-mono text-[11px]"
-                        spellCheck={false}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="mb-1.5 block text-[10.5px] text-muted">模型</label>
-                      <Input
-                        value={draft.model}
-                        onChange={(event) => update(channel.id, { model: event.target.value })}
-                        placeholder={preset?.models[0] ?? 'model-id'}
-                        className="h-9 font-mono text-[11px]"
-                        list={`models-${channel.id}`}
-                        spellCheck={false}
-                      />
-                      <datalist id={`models-${channel.id}`}>
-                        {(preset?.models ?? []).map((model) => (
-                          <option key={model} value={model} />
-                        ))}
-                      </datalist>
-                    </div>
-
-                    <SecretInput
-                      value={draft.apiKey}
-                      onChange={(value) => update(channel.id, { apiKey: value })}
+                    <ChevronDown
+                      size={14}
+                      className={cn('shrink-0 text-muted/50 transition-transform', open && 'rotate-180')}
                     />
-                  </div>
+                  </button>
 
-                  <div className="mt-4 flex gap-2">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => save(channel.id)}
-                      disabled={!clientReady && draft.apiKey.length > 0}
-                    >
-                      <Check size={12} />
-                      保存
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => test(channel.id)}
-                      disabled={testing === channel.id || !clientReady}
-                    >
-                      {testing === channel.id ? <Loader2 size={12} className="animate-spin" /> : null}
-                      测试
-                    </Button>
-                  </div>
+                  {open ? (
+                    <div className="pb-5 sm:pl-[52px]">
+                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                        <div>
+                          <label className="mb-1.5 block text-[10.5px] text-muted">服务商</label>
+                          <Select
+                            value={draft.preset}
+                            onChange={(event) => applyPreset(channel.id, event.target.value)}
+                            className="h-9 text-[12px]"
+                          >
+                            {PRESETS[channel.id].map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.label}
+                              </option>
+                            ))}
+                          </Select>
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-[10.5px] text-muted">模型</label>
+                          <Input
+                            value={draft.model}
+                            onChange={(event) => update(channel.id, { model: event.target.value })}
+                            placeholder={preset?.models[0] ?? 'model-id'}
+                            className="h-9 font-mono text-[11.5px]"
+                            list={`models-${channel.id}`}
+                            spellCheck={false}
+                          />
+                          <datalist id={`models-${channel.id}`}>
+                            {(preset?.models ?? []).map((model) => (
+                              <option key={model} value={model} />
+                            ))}
+                          </datalist>
+                        </div>
+
+                        <div>
+                          <label className="mb-1.5 block text-[10.5px] text-muted">Base URL</label>
+                          <Input
+                            value={draft.baseUrl}
+                            onChange={(event) => update(channel.id, { baseUrl: event.target.value })}
+                            placeholder="https://api.example.com/v1"
+                            className="h-9 font-mono text-[11.5px]"
+                            spellCheck={false}
+                          />
+                        </div>
+
+                        <SecretInput
+                          value={draft.apiKey}
+                          onChange={(value) => update(channel.id, { apiKey: value })}
+                        />
+                      </div>
+
+                      <div className="mt-3 flex gap-2">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => save(channel.id)}
+                          disabled={!clientReady && draft.apiKey.length > 0}
+                        >
+                          <Check size={12} />
+                          保存
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => test(channel.id)}
+                          disabled={testing === channel.id || !clientReady}
+                        >
+                          {testing === channel.id ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : null}
+                          测试
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
           </div>
 
-          <p className="mt-4 text-[10.5px] leading-relaxed text-muted/65">
-            密钥只写进本机 IndexedDB。请求经 /api/chat 转发时仅存在于内存，不落盘、不写日志。
+          <p className="mt-4 text-[10.5px] leading-relaxed text-muted/60">
+            密钥只写进本机 IndexedDB。请求经 /api/chat 转发时只存在于内存，不落盘、不写日志。
             每次转发都会校验目标地址，内网与回环地址会被拒绝。
           </p>
         </Panel>
@@ -380,7 +385,7 @@ export default function SettingsPage() {
               <div className="flex items-baseline justify-between">
                 <span className="text-[11.5px] text-muted">已用空间</span>
                 <span className="font-mono text-[11px] text-ink/75">
-                  {usage ? `${mb(usage.used)} / ${mb(usage.quota)}` : '读取中'}
+                  {usage ? `${formatBytes(usage.used)} / ${formatBytes(usage.quota)}` : '读取中'}
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full shadow-[var(--shadow-inset-sm)]">
@@ -401,7 +406,12 @@ export default function SettingsPage() {
                 <Download size={12} />
                 导出备份
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setWipeOpen(true)}>
+              <Button
+                variant="soft"
+                size="sm"
+                onClick={() => setWipeOpen(true)}
+                className="text-[#8c3b32]"
+              >
                 <Trash2 size={12} />
                 清空数据
               </Button>
@@ -419,28 +429,16 @@ export default function SettingsPage() {
           </Panel>
         </div>
 
-        <Panel title="关于这一版" hint="v0.1 · local first">
-          <div className="grid grid-cols-1 gap-6 text-[11.5px] leading-relaxed text-muted md:grid-cols-3">
-            <div>
-              <h3 className="font-serif text-[14px] text-ink">已实现</h3>
-              <p className="mt-2">
-                文本流式起草、图像生成与程序化兜底、录音与转写、时间线裁切、分镜编排、
-                本地账户与记忆检索。
-              </p>
-            </div>
-            <div>
-              <h3 className="font-serif text-[14px] text-ink">未实现</h3>
-              <p className="mt-2">
-                服务端成片渲染、跨设备账号同步、云端协作房间。当前版本的实时链路限定在同一设备。
-              </p>
-            </div>
-            <div>
-              <h3 className="font-serif text-[14px] text-ink">技术栈</h3>
-              <p className="mt-2">
-                Next.js App Router · TypeScript · Tailwind · Framer Motion · three.js ·
-                IndexedDB · SSE
-              </p>
-            </div>
+        <Panel title="关于" hint={`v${process.env.NEXT_PUBLIC_APP_VERSION ?? '0.3'} · 本地优先`}>
+          <div className="grid grid-cols-1 gap-4 text-[11px] leading-relaxed text-muted md:grid-cols-2">
+            <p>
+              <span className="text-ink/85">已有</span>：文本流式起草、图像生成与程序化兜底、
+              录音转写、时间线裁切、分镜编排、本地账户与记忆检索。
+            </p>
+            <p>
+              <span className="text-ink/85">尚未</span>：服务端成片渲染、跨设备同步、云端协作房间。
+              实时链路目前只覆盖同一设备。
+            </p>
           </div>
         </Panel>
       </div>

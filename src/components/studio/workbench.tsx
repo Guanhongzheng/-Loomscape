@@ -32,6 +32,7 @@ export function WorkbenchHeader({
 }
 
 export function Panel({
+  id,
   title,
   hint,
   action,
@@ -39,6 +40,7 @@ export function Panel({
   className,
   bodyClassName,
 }: {
+  id?: string;
   title?: string;
   hint?: string;
   action?: React.ReactNode;
@@ -47,7 +49,7 @@ export function Panel({
   bodyClassName?: string;
 }) {
   return (
-    <section className={cn('neu rounded-2xl', className)}>
+    <section id={id} className={cn('neu rounded-2xl', className)}>
       {title ? (
         <header className="flex items-center justify-between gap-3 border-b border-[rgb(var(--line))]/55 px-5 py-3.5">
           <div>
@@ -57,7 +59,7 @@ export function Panel({
           {action}
         </header>
       ) : null}
-      <div className={cn('p-5', bodyClassName)}>{children}</div>
+      <div className={cn('p-4 md:p-5', bodyClassName)}>{children}</div>
     </section>
   );
 }

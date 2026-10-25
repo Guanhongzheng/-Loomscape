@@ -1,7 +1,16 @@
+import { readFileSync } from 'node:fs';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // One source of truth for the version shown in settings; the about panel
+  // used to drift from package.json because it was a hand-written string.
+  env: {
+    NEXT_PUBLIC_APP_VERSION: pkg.version,
+  },
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },

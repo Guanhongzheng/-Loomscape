@@ -720,7 +720,7 @@ export default function ChatWorkbench() {
               ) : null}
             </div>
             <Link
-              href="/studio/settings"
+              href="/studio/settings#models"
               className="mt-3 inline-flex items-center gap-1 text-[11px] text-[rgb(var(--copper))]/85 hover:underline"
             >
               更换嵌入模型
