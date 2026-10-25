@@ -156,6 +156,28 @@ type LoadOptions = {
 const pipelines = new Map<string, Promise<unknown>>();
 const backends = new Map<string, Backend>();
 
+/**
+ * One run per session at a time. Two overlapping decodes on the same pipeline
+ * double the KV cache, and two encodes double the activation buffers — inside
+ * a 4GB heap that is the difference between fitting and `Aborted()`. Calls
+ * queue instead of being dropped, so a fast double submit still produces two
+ * answers, in order.
+ */
+const running = new Map<string, Promise<unknown>>();
+
+function exclusive<T>(modelId: string, work: () => Promise<T>): Promise<T> {
+  const previous = running.get(modelId) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  running.set(
+    modelId,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 const ATTEMPT_KEY = 'loomscape:model-load';
 
 /**
@@ -287,6 +309,10 @@ async function release(entry: Resident): Promise<void> {
  * download is still in flight without leaving an orphan session behind.
  */
 export async function unloadModel(modelId?: string): Promise<void> {
+  return serialised(() => drop(modelId));
+}
+
+async function drop(modelId?: string): Promise<void> {
   if (modelId) {
     const target = residents.find((row) => row.modelId === modelId);
     if (target) await release(target);
@@ -651,8 +677,12 @@ export async function isModelCached(repo: string, dtype: ModelDtype | 'q4' = 'q8
 }
 
 export async function removeModel(repo: string): Promise<number> {
-  const holding = residents.filter((row) => row.repo === repo);
-  for (const row of holding) await release(row);
+  // The release has to wait for an in-flight load of the same repo, otherwise
+  // a load that lands a moment later leaves a session nobody can see.
+  await serialised(async () => {
+    const holding = residents.filter((row) => row.repo === repo);
+    for (const row of holding) await release(row);
+  });
   if (typeof caches === 'undefined') return 0;
   const cache = await caches.open(CACHE_NAME);
   const keys = await cache.keys();
@@ -672,7 +702,7 @@ export async function embedTexts(
   const run = pipe as (input: string[], options: Record<string, unknown>) => Promise<{
     tolist?: () => number[][];
   }>;
-  const output = await run(texts, { pooling, normalize: true });
+  const output = await exclusive(model.id, () => run(texts, { pooling, normalize: true }));
   const rows = typeof output.tolist === 'function' ? output.tolist() : output;
   return { vectors: rows as number[][], backend };
 }
@@ -817,17 +847,19 @@ export async function streamLocal(options: {
     },
   });
 
-  await runner(chatPrompt(options.system, options.turns, options.model.prefill), {
-    max_new_tokens: options.maxTokens ?? 512,
-    do_sample: true,
-    temperature: options.temperature ?? 0.7,
-    top_p: 0.9,
-    // 1.05 let a 0.5B model settle on a phrase and loop; 1.18 over-corrected
-    // and pushed it away from tokens it had just read (digits included), so the
-    // penalty sits in the middle and the n-gram guard is gone.
-    repetition_penalty: 1.1,
-    streamer,
-  });
+  await exclusive(options.model.id, () =>
+    runner(chatPrompt(options.system, options.turns, options.model.prefill), {
+      max_new_tokens: options.maxTokens ?? 512,
+      do_sample: true,
+      temperature: options.temperature ?? 0.7,
+      top_p: 0.9,
+      // 1.05 let a 0.5B model settle on a phrase and loop; 1.18 over-corrected
+      // and pushed it away from tokens it had just read (digits included), so
+      // the penalty sits in the middle and the n-gram guard is gone.
+      repetition_penalty: 1.1,
+      streamer,
+    }),
+  );
   filter.flush();
 
   backends.set(options.model.id, backend);

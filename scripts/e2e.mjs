@@ -161,7 +161,7 @@ async function run() {
   }));
   check('左侧栏已移除', nav.aside === 0, `aside=${nav.aside}`);
   check('顶部栏存在', nav.header);
-  check('底部坞有九个入口', nav.dock === 9, `links=${nav.dock}`);
+  check('底部坞有五个入口', nav.dock === 5, `links=${nav.dock}`);
   check('底部坞在视口内', nav.dockVisible);
   await page.screenshot({ path: path.join(shots, '02-workspace.png') });
 

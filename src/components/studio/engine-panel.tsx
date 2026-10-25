@@ -153,6 +153,11 @@ export function EnginePanel() {
    * non-local path instead of leaving a preference that would evict it later.
    */
   const activate = async (model: LocalModel) => {
+    // A double click used to queue two loads: the gate serialised them, but
+    // both would then patch preferences and toast. The state is written
+    // synchronously, so the second click sees it.
+    if (useModelRuntime.getState().models[model.id]?.state === 'downloading') return;
+
     const before = useModelRuntime.getState().residents;
     const dtype = dtypeFor(model, backend);
 
