@@ -5,12 +5,20 @@ import { opaqueId } from './id';
 
 export type Contact = { uid: string; handle: string; addedAt: number };
 
+export type Announcement = {
+  text: string;
+  updatedAt: number;
+  by: string;
+};
+
 export type Conversation = {
   id: string;
   kind: 'direct' | 'group';
   name: string;
   members: string[];
   code?: string;
+  /** Groups only: one pinned notice, versioned by `updatedAt`. */
+  announcement?: Announcement;
   createdAt: number;
   updatedAt: number;
 };
@@ -100,6 +108,32 @@ export async function listMessages(conversationId: string): Promise<Message[]> {
   } catch {
     return [];
   }
+}
+
+export async function setAnnouncement(
+  conversation: Conversation,
+  text: string,
+  by: string,
+): Promise<Conversation> {
+  return saveConversation({
+    ...conversation,
+    announcement: { text: text.trim().slice(0, 400), updatedAt: Date.now(), by },
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Counts what arrived after the reader's watermark. Deriving the number from
+ * the stored messages keeps the badge correct across reloads and tabs, which an
+ * in-memory counter cannot do.
+ */
+export async function countUnread(
+  conversationId: string,
+  since: number,
+  selfUid: string,
+): Promise<number> {
+  const rows = await listMessages(conversationId);
+  return rows.filter((row) => row.createdAt > since && row.authorUid !== selfUid).length;
 }
 
 export async function sendMessage(input: {

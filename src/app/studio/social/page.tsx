@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, Hash, Plus, Send, Users } from 'lucide-react';
+import { Check, Copy, Hash, Megaphone, Pencil, Plus, Send, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/field';
+import { Input, Textarea } from '@/components/ui/field';
 import { Dialog } from '@/components/ui/dialog';
 import { Panel, WorkbenchHeader } from '@/components/studio/workbench';
 import { toast } from '@/components/ui/toast';
@@ -11,16 +11,19 @@ import { useAuth } from '@/lib/auth';
 import {
   CHANNEL_NAME,
   addContact,
+  countUnread,
   createGroup,
   ensureDirect,
   listContacts,
   listConversations,
   listMessages,
   sendMessage,
+  setAnnouncement,
   type Contact,
   type Conversation,
   type Message,
 } from '@/lib/social';
+import { useUnread } from '@/lib/unread';
 import { cn } from '@/lib/cn';
 
 export default function SocialWorkbench() {
@@ -36,6 +39,10 @@ export default function SocialWorkbench() {
   const [groupOpen, setGroupOpen] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [groupMembers, setGroupMembers] = useState<string[]>([]);
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeDraft, setNoticeDraft] = useState('');
+  const counts = useUnread((state) => state.counts);
+  const announcementSeen = useUnread((state) => state.announcementSeen);
 
   const channelRef = useRef<BroadcastChannel | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -52,7 +59,20 @@ export default function SocialWorkbench() {
     setContacts(nextContacts);
     setConversations(nextConversations);
     setActiveId((current) => current ?? nextConversations[0]?.id ?? null);
-  }, []);
+
+    if (!user) return;
+    for (const conversation of nextConversations) {
+      const store = useUnread.getState();
+      const since = store.seenAt[conversation.id];
+      // A conversation seen for the first time must not arrive with its whole
+      // history counted as unread.
+      if (since === undefined) {
+        store.known(conversation.id, conversation.updatedAt, conversation.announcement?.updatedAt ?? 0);
+        continue;
+      }
+      store.setCount(conversation.id, await countUnread(conversation.id, since, user.uid));
+    }
+  }, [user]);
 
   useEffect(() => {
     void refresh();
@@ -64,13 +84,27 @@ export default function SocialWorkbench() {
       return;
     }
     void listMessages(activeId).then(setMessages);
+    // Opening a conversation is what clears its badge.
+    useUnread.getState().markRead(activeId);
   }, [activeId]);
+
+  useEffect(() => {
+    if (!active) return;
+    useUnread.getState().markRead(active.id);
+    if (active.announcement) {
+      useUnread.getState().markAnnouncementSeen(active.id, active.announcement.updatedAt);
+    }
+  }, [active]);
 
   useEffect(() => {
     if (!user) return;
     const channel = new BroadcastChannel(CHANNEL_NAME);
     channelRef.current = channel;
     channel.onmessage = (event: MessageEvent<{ type: string; message?: Message }>) => {
+      if (event.data?.type === 'announcement') {
+        void refresh();
+        return;
+      }
       if (event.data?.type !== 'message' || !event.data.message) return;
       const incoming = event.data.message;
       if (incoming.authorUid === user.uid) return;
@@ -78,6 +112,15 @@ export default function SocialWorkbench() {
         setMessages((rows) =>
           rows.some((row) => row.id === incoming.id) ? rows : [...rows, incoming],
         );
+      } else {
+        const store = useUnread.getState();
+        // A conversation first heard about through a broadcast gets its
+        // watermark set just before this message, otherwise the read-model
+        // recount below would treat the whole history as read.
+        if (store.seenAt[incoming.conversationId] === undefined) {
+          store.known(incoming.conversationId, incoming.createdAt - 1);
+        }
+        store.bump(incoming.conversationId);
       }
       void refresh();
     };
@@ -128,9 +171,28 @@ export default function SocialWorkbench() {
     setGroupOpen(false);
     setGroupName('');
     setGroupMembers([]);
+    useUnread.getState().markRead(group.id);
     await refresh();
     setActiveId(group.id);
     toast(`群组已建立 · 群号 ${group.code}`, 'success');
+  };
+
+  const openNotice = () => {
+    if (!active) return;
+    setNoticeDraft(active.announcement?.text ?? '');
+    setNoticeOpen(true);
+  };
+
+  const saveNotice = async () => {
+    if (!active || !user) return;
+    const updated = await setAnnouncement(active, noticeDraft, user.handle);
+    setConversations((rows) => rows.map((row) => (row.id === updated.id ? updated : row)));
+    if (updated.announcement) {
+      useUnread.getState().markAnnouncementSeen(updated.id, updated.announcement.updatedAt);
+    }
+    channelRef.current?.postMessage({ type: 'announcement', conversation: updated });
+    setNoticeOpen(false);
+    toast('公告已更新', 'success');
   };
 
   const submit = async () => {
@@ -145,6 +207,7 @@ export default function SocialWorkbench() {
     });
     setMessages((rows) => [...rows, message]);
     channelRef.current?.postMessage({ type: 'message', message });
+    useUnread.getState().markRead(active.id);
     await refresh();
   };
 
@@ -233,12 +296,29 @@ export default function SocialWorkbench() {
                         <span className="block truncate text-[12.5px] text-ink/85">
                           {conversation.name}
                         </span>
-                        <span className="mt-0.5 block font-mono text-[9.5px] text-muted/60">
+                        <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[9.5px] text-muted/60">
                           {conversation.kind === 'group'
                             ? `群号 ${conversation.code} · ${conversation.members.length} 人`
                             : '直接会话'}
+                          {conversation.announcement &&
+                          conversation.announcement.updatedAt >
+                            (announcementSeen[conversation.id] ?? 0) ? (
+                            <span className="flex items-center gap-1 text-[#b4453a]">
+                              <Megaphone size={9} strokeWidth={2} />
+                              公告
+                            </span>
+                          ) : null}
                         </span>
                       </span>
+
+                      {(counts[conversation.id] ?? 0) > 0 ? (
+                        <span
+                          className="ml-1 grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-[#b4453a] px-1.5 font-mono text-[9.5px] leading-none text-white"
+                          aria-label={`${counts[conversation.id]} 条未读`}
+                        >
+                          {(counts[conversation.id] ?? 0) > 99 ? '99+' : counts[conversation.id]}
+                        </span>
+                      ) : null}
                     </button>
                   </li>
                 ))}
@@ -277,6 +357,34 @@ export default function SocialWorkbench() {
             </div>
           ) : (
             <>
+              {active.kind === 'group' ? (
+                <div className="border-b border-[rgb(var(--line))]/55 px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <Megaphone size={11} strokeWidth={1.9} className="text-[rgb(var(--copper))]" />
+                    <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted/60">
+                      公告
+                    </span>
+                    {active.announcement &&
+                    active.announcement.updatedAt > (announcementSeen[active.id] ?? 0) ? (
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#b4453a]" />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={openNotice}
+                      className="ml-auto flex items-center gap-1 text-[10.5px] text-muted transition-colors hover:text-ink"
+                    >
+                      <Pencil size={10} />
+                      {active.announcement ? '修改' : '写公告'}
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink/75">
+                    {active.announcement
+                      ? active.announcement.text
+                      : '还没有公告。公告会固定在这里，成员打开群组即可看到。'}
+                  </p>
+                </div>
+              ) : null}
+
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
                 {messages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center text-center">
@@ -348,6 +456,26 @@ export default function SocialWorkbench() {
           )}
         </Panel>
       </div>
+
+      <Dialog
+        open={noticeOpen}
+        onClose={() => setNoticeOpen(false)}
+        title="群公告"
+        description="保存后会广播到同一设备的其他标签页，并在会话列表显示未读标记。"
+      >
+        <div className="space-y-4">
+          <Textarea
+            rows={4}
+            value={noticeDraft}
+            onChange={(event) => setNoticeDraft(event.target.value)}
+            placeholder="例如：本周主题是「夜里的光」，周五晚十点前交稿。"
+            maxLength={400}
+          />
+          <Button variant="primary" size="md" className="w-full" onClick={() => void saveNotice()}>
+            发布公告
+          </Button>
+        </div>
+      </Dialog>
 
       <Dialog
         open={groupOpen}
