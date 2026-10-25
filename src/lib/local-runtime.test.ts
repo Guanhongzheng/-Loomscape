@@ -40,6 +40,12 @@ describe('threadCount', () => {
     expect(threadCount(16, true, 'embedding')).toBe(4);
     expect(threadCount(2, true, 'text')).toBe(1);
   });
+
+  it('drops an embedder to two threads while a decoder shares the heap', () => {
+    expect(threadCount(16, true, 'embedding', true)).toBe(2);
+    // The paired cap only lowers the ceiling; a two-core machine stays at one.
+    expect(threadCount(2, true, 'embedding', true)).toBe(1);
+  });
 });
 
 describe('runtimeInfo', () => {

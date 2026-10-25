@@ -7,9 +7,22 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, Loader2, LogIn, LogOut } from 'lucide-react';
 import { useAuth, wasSignedOut } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
-import { ALL_LOCAL_MODELS, findModel, useEngines, useModelRuntime } from '@/lib/engines';
+import {
+  ALL_LOCAL_MODELS,
+  fitsTogether,
+  findModel,
+  useEngines,
+  useModelRuntime,
+  type LocalModel,
+} from '@/lib/engines';
 import { describeError } from '@/lib/errors';
-import { detectBackend, dtypeFor, isModelCached, loadModel } from '@/lib/local-runtime';
+import {
+  detectBackend,
+  dtypeFor,
+  isModelCached,
+  isResident,
+  loadModel,
+} from '@/lib/local-runtime';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
@@ -76,7 +89,7 @@ export function StudioShell({
   const prefs = useEngines((state) => state.prefs);
   const prefsLoaded = useEngines((state) => state.loaded);
   const loadEngines = useEngines((state) => state.load);
-  const resident = useModelRuntime((state) => state.resident);
+  const residents = useModelRuntime((state) => state.residents);
   const models = useModelRuntime((state) => state.models);
   const active = useModelRuntime((state) =>
     ALL_LOCAL_MODELS.find((model) => state.models[model.id]?.state === 'downloading'),
@@ -94,44 +107,77 @@ export function StudioShell({
    * would be rude.
    */
   useEffect(() => {
-    if (!prefsLoaded || resident || autoLoaded.current) return;
+    if (!prefsLoaded || autoLoaded.current) return;
+    // Something is already in memory (a previous mount, or a manual load), so
+    // the entry path has nothing left to do.
+    if (residents.length > 0) {
+      autoLoaded.current = true;
+      return;
+    }
     autoLoaded.current = true;
 
-    const candidate =
-      prefs.textMode === 'local'
-        ? findModel(prefs.textModelId)
-        : prefs.embeddingMode === 'local'
-          ? findModel(prefs.embeddingModelId)
-          : undefined;
-    if (!candidate) return;
+    // Text first: it is what the first message needs, and an embedder loaded
+    // first would claim the heap and push the decoder out.
+    const wanted: LocalModel[] = [];
+    if (prefs.textMode === 'local') {
+      const model = findModel(prefs.textModelId);
+      if (model) wanted.push(model);
+    }
+    if (prefs.embeddingMode === 'local') {
+      const model = findModel(prefs.embeddingModelId);
+      if (model) wanted.push(model);
+    }
+    if (wanted.length === 0) return;
 
     void (async () => {
       // The precision depends on the backend that will actually run, not on
       // the preference: a WebGPU pick needs fp16, and downloading it silently
       // on entry is exactly what this guard exists to avoid.
       const backend = await detectBackend(prefs.backend);
-      if (!(await isModelCached(candidate.repo, dtypeFor(candidate, backend)))) return;
-
-      // A decoder session peaks in the gigabytes. On a 4GB device that is the
-      // difference between a workspace and a crashed tab, so leave it to an
-      // explicit click there.
       const deviceMemory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-      if (candidate.task === 'text' && deviceMemory && deviceMemory <= 4) {
-        toast(`${candidate.label} 需要较多内存，设备报告 ${deviceMemory}GB，请在设置里手动加载`, 'info');
-        return;
-      }
 
-      try {
-        await loadModel(candidate, {
-          source: prefs.source,
-          backendPreference: prefs.backend,
-          report: true,
-        });
-      } catch (error) {
-        toast(`自动加载 ${candidate.label} 失败：${describeError(error)}`, 'error');
+      for (const candidate of wanted) {
+        if (isResident(candidate.id)) continue;
+        if (!(await isModelCached(candidate.repo, dtypeFor(candidate, backend)))) continue;
+
+        // A decoder session peaks in the gigabytes. On a 4GB device that is
+        // the difference between a workspace and a crashed tab, so leave it to
+        // an explicit click there.
+        if (candidate.task === 'text' && deviceMemory && deviceMemory <= 4) {
+          toast(
+            `${candidate.label} 需要较多内存，设备报告 ${deviceMemory}GB，请在设置里手动加载`,
+            'info',
+          );
+          continue;
+        }
+
+        // Pairing is budgeted: a big embedder next to the decoder would leave
+        // the tab with nothing for activations, so it stays unloaded until the
+        // user asks for it explicitly.
+        const loaded = useModelRuntime
+          .getState()
+          .residents.map((row) => findModel(row.modelId))
+          .filter((row): row is LocalModel => Boolean(row));
+        if (!fitsTogether([...loaded, candidate], backend)) {
+          toast(
+            `${candidate.label} 与已加载的模型超出内存预算，需要时在设置里手动切换`,
+            'info',
+          );
+          continue;
+        }
+
+        try {
+          await loadModel(candidate, {
+            source: prefs.source,
+            backendPreference: prefs.backend,
+            report: true,
+          });
+        } catch (error) {
+          toast(`自动加载 ${candidate.label} 失败：${describeError(error)}`, 'error');
+        }
       }
     })();
-  }, [prefsLoaded, resident, prefs]);
+  }, [prefsLoaded, residents.length, prefs]);
 
   /**
    * onnxruntime spawns async work of its own, so a hard failure can surface as

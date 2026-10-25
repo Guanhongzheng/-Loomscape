@@ -1,8 +1,11 @@
 'use client';
 
 import {
+  RESIDENT_BUDGET_MB,
   findModel,
+  totalPeakMB,
   useModelRuntime,
+  weightPeakMB,
   type Backend,
   type LocalModel,
   type ModelDtype,
@@ -55,14 +58,20 @@ let modulePromise: Promise<RuntimeModule> | null = null;
  * scaling past that and each worker costs memory next to a half-billion
  * parameter model.
  */
-export function threadCount(cores: number, isolated: boolean, task: 'text' | 'embedding' = 'embedding'): number {
+export function threadCount(
+  cores: number,
+  isolated: boolean,
+  task: 'text' | 'embedding' = 'embedding',
+  sharing = false,
+): number {
   if (!isolated) return 1;
   const usable = Math.max(1, Math.floor(cores) - 1);
   // Decoding keeps a KV cache and per-thread arenas alive, so a 4-thread text
   // session can need several gigabytes where an embedding one needs tens of
   // megabytes. Two threads is the point where the extra speed stops paying
-  // for the extra memory.
-  const cap = task === 'text' ? 2 : 4;
+  // for the extra memory. When a decoder is already loaded the embedder drops
+  // to the same cap: the pair has to fit one heap.
+  const cap = task === 'text' || sharing ? 2 : 4;
   return Math.min(usable, cap);
 }
 
@@ -197,15 +206,16 @@ type Resident = {
   key: string;
   backend: Backend;
   threads: number;
+  peakMB: number;
 };
 
 /**
- * A resident model owns the whole on-device budget: its ONNX session, its
- * weights and the WASM heap it grew. Loading a second one without releasing
- * the first is what makes a phone tab die, so the module keeps exactly one and
- * evicts it before starting another.
+ * Loaded sessions, one per task. A decoder and an embedder can share the wasm
+ * heap when the budget allows it — that is what makes local retrieval work
+ * next to a local writer. A second session of the same task always evicts the
+ * first, and a pair that does not fit evicts the older side.
  */
-let resident: Resident | null = null;
+let residents: Resident[] = [];
 
 /**
  * WebGPU runs fp16, never fp32. The fp32 graph for these repos is a 0.6MB
@@ -227,27 +237,62 @@ async function dispose(pipe: unknown): Promise<void> {
 }
 
 export function residentModelId(): string | null {
-  return resident?.modelId ?? null;
+  return residents[0]?.modelId ?? null;
+}
+
+export function residentModelIds(): string[] {
+  return residents.map((row) => row.modelId);
 }
 
 export function isResident(modelId: string): boolean {
-  return resident?.modelId === modelId;
+  return residents.some((row) => row.modelId === modelId);
 }
 
 /**
- * Releases the loaded model. Pending loads are disposed as soon as they land,
- * which lets the caller evict while a download is still in flight without
- * leaving an orphan session behind.
+ * Drops one session: its pipeline promise (which may still be in flight), its
+ * cache entries and its card state. The wasm heap itself cannot shrink, but
+ * releasing the session stops it from growing with the next token.
  */
-export async function unloadModel(): Promise<void> {
-  const entries = Array.from(pipelines.values());
+async function release(entry: Resident): Promise<void> {
+  residents = residents.filter((row) => row.modelId !== entry.modelId);
+  backends.delete(entry.modelId);
+  const pending = pipelines.get(entry.key);
+  pipelines.delete(entry.key);
+
+  const store = useModelRuntime.getState();
+  store.dropResident(entry.modelId);
+  store.reset(entry.modelId);
+
+  if (!pending) return;
+  try {
+    await dispose(await pending);
+  } catch {
+    // the load itself failed; nothing to release
+  }
+}
+
+/**
+ * Releases one model, or everything when called without an id. Pending loads
+ * are disposed as soon as they land, which lets the caller evict while a
+ * download is still in flight without leaving an orphan session behind.
+ */
+export async function unloadModel(modelId?: string): Promise<void> {
+  if (modelId) {
+    const target = residents.find((row) => row.modelId === modelId);
+    if (target) await release(target);
+    return;
+  }
+
+  const pending = Array.from(pipelines.values());
   pipelines.clear();
-  resident = null;
+  residents = [];
   backends.clear();
-  useModelRuntime.getState().clearResident();
+  const store = useModelRuntime.getState();
+  store.clearResident();
+  Object.keys(store.models).forEach((id) => store.reset(id));
 
   await Promise.all(
-    entries.map(async (entry) => {
+    pending.map(async (entry) => {
       try {
         await dispose(await entry);
       } catch {
@@ -255,6 +300,31 @@ export async function unloadModel(): Promise<void> {
       }
     }),
   );
+}
+
+/**
+ * Frees room for one more session. Same-task sessions go first because two
+ * decoders never fit; across tasks the older one goes only when the budget
+ * says the pair does not fit, so text + a small embedder normally coexist.
+ */
+function recordResident(next: Resident): void {
+  residents = [...residents.filter((row) => row.task !== next.task), next];
+  useModelRuntime.getState().setResident({
+    modelId: next.modelId,
+    task: next.task,
+    backend: next.backend,
+    threads: next.threads,
+    peakMB: next.peakMB,
+  });
+}
+
+async function makeRoom(next: Resident): Promise<void> {
+  const sameTask = residents.filter((row) => row.task === next.task && row.modelId !== next.modelId);
+  for (const row of sameTask) await release(row);
+
+  while (residents.length > 0 && totalPeakMB(residents) + next.peakMB > RESIDENT_BUDGET_MB) {
+    await release(residents[0]);
+  }
 }
 
 /**
@@ -282,17 +352,36 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   const mod = await runtime(options.source);
   const backend = await detectBackend(options.backendPreference);
   const dtype = dtypeFor(model, backend);
-  const threads = threadCount(runtimeInfo().cores, runtimeInfo().isolated, model.task);
+  // An embedder loaded next to a decoder gives up half its threads: the pair
+  // shares one heap, and worker arenas are the part that grows with threads.
+  const sharing = model.task === 'embedding' && residents.some((row) => row.task === 'text');
+  const threads = threadCount(
+    runtimeInfo().cores,
+    runtimeInfo().isolated,
+    model.task,
+    sharing,
+  );
   const key = `${pipelineTask(model.task)}:${model.repo}:${dtype}:${backend}:${threads}`;
+  const next: Resident = {
+    modelId: model.id,
+    repo: model.repo,
+    task: model.task,
+    key,
+    backend,
+    threads,
+    peakMB: weightPeakMB(model, backend),
+  };
 
   const wasmBackend = mod.env.backends.onnx.wasm;
   if (wasmBackend) wasmBackend.numThreads = threads;
 
   backends.set(model.id, backend);
-  if (resident && resident.key !== key) await unloadModel();
   if (pipelines.has(key)) {
+    // Already parsed: just re-assert the record, no room keeping needed.
+    recordResident(next);
     return { pipe: await pipelines.get(key)!, backend };
   }
+  await makeRoom(next);
 
   const runtimeStore = useModelRuntime.getState();
   if (options.report) runtimeStore.set(model.id, { state: 'downloading', progress: 0, backend });
@@ -359,21 +448,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   try {
     const pipe = await task;
     markAttempt(null);
-    // Anything previously marked ready is gone: only one model lives at a time.
-    const store = useModelRuntime.getState();
-    Object.entries(store.models).forEach(([id, state]) => {
-      if (id !== model.id && state.state === 'ready') store.reset(id);
-    });
-
-    resident = {
-      modelId: model.id,
-      repo: model.repo,
-      task: model.task,
-      key,
-      backend,
-      threads,
-    };
-    store.setResident({ modelId: model.id, backend, threads });
+    recordResident(next);
 
     if (options.report) {
       runtimeStore.set(model.id, { state: 'ready', progress: 1, backend, total: 0, loaded: 0 });
@@ -506,7 +581,8 @@ export async function isModelCached(repo: string, dtype: ModelDtype | 'q4' = 'q8
 }
 
 export async function removeModel(repo: string): Promise<number> {
-  if (resident?.repo === repo) await unloadModel();
+  const holding = residents.filter((row) => row.repo === repo);
+  for (const row of holding) await release(row);
   if (typeof caches === 'undefined') return 0;
   const cache = await caches.open(CACHE_NAME);
   const keys = await cache.keys();
@@ -704,10 +780,12 @@ export function forgetPipeline(repo: string) {
     pipelines.delete(key);
     void entry.then(dispose).catch(() => undefined);
   });
-  if (resident?.repo === repo) {
-    resident = null;
-    useModelRuntime.getState().clearResident();
-  }
+  // Only this repo goes; a paired session of the other task stays loaded.
+  residents = residents.filter((row) => {
+    if (row.repo !== repo) return true;
+    useModelRuntime.getState().dropResident(row.modelId);
+    return false;
+  });
 }
 
 export function lastBackend(modelId: string): Backend | undefined {

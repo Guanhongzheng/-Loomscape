@@ -23,7 +23,7 @@ import { ToolBadges, textOf } from '@/components/studio/chat-parts';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
-import { findModel, useEngines } from '@/lib/engines';
+import { findModel, useEngines, useModelRuntime } from '@/lib/engines';
 import { streamLocal } from '@/lib/local-runtime';
 import {
   activeEmbedder,
@@ -212,8 +212,15 @@ export default function ChatWorkbench() {
   useEffect(() => {
     void loadEngines();
     void readMemoryPrefs().then((value) => setRagOn(value.enabled));
-    void activeEmbedder().then(setEmbedder);
   }, [loadEngines]);
+
+  // The embedder label used to be read once on mount, so a model that finished
+  // loading a moment later left the rail claiming "哈希" while retrieval was
+  // already running on-device vectors.
+  const residents = useModelRuntime((state) => state.residents);
+  useEffect(() => {
+    void activeEmbedder().then(setEmbedder);
+  }, [residents, prefs.embeddingMode, prefs.embeddingModelId]);
 
   const refreshDocs = () => {
     if (!user) return;

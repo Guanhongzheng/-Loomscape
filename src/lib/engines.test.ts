@@ -4,10 +4,16 @@ import {
   DEFAULT_ENGINE_PREFS,
   LOCAL_EMBEDDINGS,
   LOCAL_TEXT,
+  RESIDENT_BUDGET_MB,
   RETIRED_MODELS,
+  RUNTIME_BASE_MB,
   findModel,
+  fitsTogether,
   normalisePrefs,
   sizeFor,
+  totalPeakMB,
+  useModelRuntime,
+  weightPeakMB,
 } from '@/lib/engines';
 
 describe('local catalogue', () => {
@@ -96,5 +102,68 @@ describe('normalisePrefs', () => {
 
   it('survives an empty store', () => {
     expect(normalisePrefs(null)).toEqual(DEFAULT_ENGINE_PREFS);
+  });
+});
+
+describe('memory budget', () => {
+  const text = findModel('qwen3-0.6b')!;
+  const small = findModel('bge-small-zh')!;
+  const base = findModel('bge-base-zh')!;
+  const m3 = findModel('bge-m3')!;
+
+  it('fits a decoder and a small embedder in one heap', () => {
+    expect(fitsTogether([text, small], 'wasm')).toBe(true);
+    expect(fitsTogether([text, base], 'wasm')).toBe(true);
+  });
+
+  it('refuses the pair that would blow the wasm ceiling', () => {
+    // 0.6B + M3 leaves under 100MB between the estimate and 4GB.
+    expect(fitsTogether([text, m3], 'wasm')).toBe(false);
+  });
+
+  it('counts the runtime overhead exactly once', () => {
+    expect(totalPeakMB([])).toBe(RUNTIME_BASE_MB);
+    const residents = [
+      { modelId: text.id, task: 'text' as const, backend: 'wasm' as const, threads: 2, peakMB: weightPeakMB(text, 'wasm') },
+      { modelId: base.id, task: 'embedding' as const, backend: 'wasm' as const, threads: 2, peakMB: weightPeakMB(base, 'wasm') },
+    ];
+    expect(totalPeakMB(residents)).toBeLessThanOrEqual(RESIDENT_BUDGET_MB);
+  });
+
+  it('estimates from the precision that will actually run', () => {
+    expect(weightPeakMB(text, 'webgpu')).toBeGreaterThan(weightPeakMB(text, 'wasm'));
+  });
+});
+
+describe('runtime store', () => {
+  const resident = (modelId: string, task: 'text' | 'embedding', peakMB: number) => ({
+    modelId,
+    task,
+    backend: 'wasm' as const,
+    threads: 2,
+    peakMB,
+  });
+
+  it('keeps one session per task and swaps the old one out', () => {
+    const store = useModelRuntime.getState();
+    store.clearResident();
+    store.setResident(resident('qwen3-0.6b', 'text', 1767));
+    store.setResident(resident('bge-base-zh', 'embedding', 294));
+    expect(useModelRuntime.getState().residents).toHaveLength(2);
+
+    store.setResident(resident('bge-small-zh', 'embedding', 69));
+    expect(useModelRuntime.getState().residents.map((row) => row.modelId)).toEqual([
+      'qwen3-0.6b',
+      'bge-small-zh',
+    ]);
+  });
+
+  it('drops a single session without touching the pair', () => {
+    const store = useModelRuntime.getState();
+    store.clearResident();
+    store.setResident(resident('qwen3-0.6b', 'text', 1767));
+    store.setResident(resident('bge-base-zh', 'embedding', 294));
+    store.dropResident('bge-base-zh');
+    expect(useModelRuntime.getState().residents.map((row) => row.modelId)).toEqual(['qwen3-0.6b']);
   });
 });

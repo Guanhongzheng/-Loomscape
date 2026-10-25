@@ -197,25 +197,60 @@ export type ModelRuntimeState = {
   message?: string;
 };
 
-/** Only one local model is kept in memory; this is the one that is loaded. */
+/**
+ * A loaded session. At most one per task: a second decoder never fits, but a
+ * decoder and an embedder can share the heap when the budget below allows it.
+ */
 export type ResidentInfo = {
   modelId: string;
+  task: EngineTask;
   backend: Backend;
   threads: number;
-} | null;
+  /** Estimated peak contribution of this session, in MB. */
+  peakMB: number;
+};
+
+/**
+ * The wasm32 heap is 4GB and the page needs part of it, so model sessions are
+ * budgeted rather than left to the allocator. `RUNTIME_BASE_MB` covers the
+ * runtime and JS side once; each session adds a multiple of its weight size.
+ */
+export const RESIDENT_BUDGET_MB = 3400;
+export const RUNTIME_BASE_MB = 600;
+
+/**
+ * Peak footprint of a session relative to its weights. Calibrated on two
+ * measurements: 0.5B/int8 peaked at ~2.4GB of renderer memory, and 1.7B/int8
+ * aborted at the 4GB ceiling. Three times the weight size reproduces both.
+ */
+export function weightPeakMB(model: LocalModel, backend: 'auto' | Backend): number {
+  return Math.round(sizeFor(model, backend) * 3);
+}
+
+export function totalPeakMB(residents: ResidentInfo[]): number {
+  return RUNTIME_BASE_MB + residents.reduce((sum, row) => sum + row.peakMB, 0);
+}
+
+/** Whether a set of models can be held at once, base overhead counted once. */
+export function fitsTogether(models: LocalModel[], backend: 'auto' | Backend): boolean {
+  const peak =
+    RUNTIME_BASE_MB + models.reduce((sum, model) => sum + weightPeakMB(model, backend), 0);
+  return peak <= RESIDENT_BUDGET_MB;
+}
 
 type RuntimeStore = {
   models: Record<string, ModelRuntimeState>;
-  resident: ResidentInfo;
+  residents: ResidentInfo[];
   set: (id: string, patch: Partial<ModelRuntimeState>) => void;
   reset: (id: string) => void;
-  setResident: (info: NonNullable<ResidentInfo>) => void;
+  setResident: (info: ResidentInfo) => void;
+  dropResident: (modelId: string) => void;
   clearResident: () => void;
 };
 
 export const useModelRuntime = create<RuntimeStore>((set) => ({
   models: {},
-  resident: null,
+  residents: [],
   set: (id, patch) =>
     set((state) => ({
       models: {
@@ -226,10 +261,19 @@ export const useModelRuntime = create<RuntimeStore>((set) => ({
   reset: (id) =>
     set((state) => ({
       models: { ...state.models, [id]: { state: 'idle', progress: 0 } },
-      resident: state.resident?.modelId === id ? null : state.resident,
+      residents: state.residents.filter((row) => row.modelId !== id),
     })),
-  setResident: (info) => set({ resident: info }),
-  clearResident: () => set({ resident: null }),
+  // A task can only own one session, so an upsert also drops the old one.
+  setResident: (info) =>
+    set((state) => ({
+      residents: [
+        ...state.residents.filter((row) => row.task !== info.task && row.modelId !== info.modelId),
+        info,
+      ],
+    })),
+  dropResident: (modelId) =>
+    set((state) => ({ residents: state.residents.filter((row) => row.modelId !== modelId) })),
+  clearResident: () => set({ residents: [] }),
 }));
 
 export function formatBytes(bytes?: number): string {

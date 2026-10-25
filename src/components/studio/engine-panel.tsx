@@ -12,11 +12,16 @@ import {
   LOCAL_EMBEDDINGS,
   LOCAL_TEXT,
   RETIRED_MODELS,
+  RESIDENT_BUDGET_MB,
+  findModel,
+  fitsTogether,
   formatBytes,
   sizeFor,
+  totalPeakMB,
   useEngines,
   useModelRuntime,
   type Backend,
+  type EnginePrefs,
   type LocalModel,
   type ModelRuntimeState,
   type ResidentInfo,
@@ -51,7 +56,7 @@ export function EnginePanel() {
   const load = useEngines((state) => state.load);
 
   const models = useModelRuntime((state) => state.models);
-  const resident = useModelRuntime((state) => state.resident);
+  const residents = useModelRuntime((state) => state.residents);
   const setModel = useModelRuntime((state) => state.set);
   const resetModel = useModelRuntime((state) => state.reset);
 
@@ -89,7 +94,7 @@ export function EnginePanel() {
   useEffect(() => {
     if (!loaded) return;
     void refresh();
-  }, [loaded, prefs, resident, refresh]);
+  }, [loaded, prefs, residents, refresh]);
 
   useEffect(() => {
     setDraft(endpoints.text);
@@ -145,13 +150,24 @@ export function EnginePanel() {
    * non-local path instead of leaving a preference that would evict it later.
    */
   const activate = async (model: LocalModel) => {
-    const previous = ALL_LOCAL_MODELS.find((item) => item.id === resident?.modelId);
+    const before = useModelRuntime.getState().residents;
     const dtype = dtypeFor(model, backend);
 
     const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
     if (model.minMemoryGB && memory && memory < model.minMemoryGB) {
       toast(
         `${model.label} 建议 ${model.minMemoryGB}GB 内存，本机只报告 ${memory}GB；可以先试，崩了就换小一档`,
+        'info',
+      );
+    }
+
+    // Say it before the download starts, not after: a big embedder will push
+    // the decoder out, and finding that out at 543MB is too late.
+    const other = residents.find((row) => row.task !== model.task);
+    const otherModel = other ? findModel(other.modelId) : undefined;
+    if (otherModel && !fitsTogether([otherModel, model], backend)) {
+      toast(
+        `加载 ${model.label} 会先卸载 ${otherModel.label}：两个会话合计超出内存预算`,
         'info',
       );
     }
@@ -182,19 +198,20 @@ export function EnginePanel() {
         report: true,
       });
 
-      await patch(
-        model.task === 'text'
-          ? {
-              textMode: 'local',
-              textModelId: model.id,
-              ...(prefs.embeddingMode === 'local' ? { embeddingMode: 'hash' as const } : {}),
-            }
-          : {
-              embeddingMode: 'local',
-              embeddingModelId: model.id,
-              ...(prefs.textMode === 'local' ? { textMode: 'api' as const } : {}),
-            },
+      // Preferences follow what is actually in memory. A session evicted for
+      // budget must not stay marked "local": the next message would load it
+      // back, evict the other side, and the pair would thrash.
+      const after = useModelRuntime.getState().residents;
+      const dropped = before.filter(
+        (row) => row.modelId !== model.id && !after.some((next) => next.modelId === row.modelId),
       );
+      const nextPrefs: Partial<EnginePrefs> =
+        model.task === 'text'
+          ? { textMode: 'local', textModelId: model.id }
+          : { embeddingMode: 'local', embeddingModelId: model.id };
+      if (dropped.some((row) => row.task === 'embedding')) nextPrefs.embeddingMode = 'hash';
+      if (dropped.some((row) => row.task === 'text')) nextPrefs.textMode = 'api';
+      await patch(nextPrefs);
 
       await refresh();
       setReleased(false);
@@ -204,10 +221,19 @@ export function EnginePanel() {
       // The resident record knows the thread count the session was opened
       // with; `runtimeInfo()` would report the embedding budget for a
       // decoder, which is capped lower.
-      const session = useModelRuntime.getState().resident;
-      const replaced = previous && previous.id !== model.id ? `，已卸载 ${previous.label}` : '';
+      const session = after.find((row) => row.modelId === model.id);
+      const replaced = dropped
+        .map((row) => findModel(row.modelId)?.label ?? row.modelId)
+        .join('、');
+      const reason = dropped.some((row) => row.task === 'text')
+        ? '（内存预算不足，文本已切回云端）'
+        : dropped.some((row) => row.task === 'embedding')
+          ? '（内存预算不足，嵌入已切回哈希）'
+          : '';
       toast(
-        `已加载 ${model.label} · ${backendLabel(session?.backend)} ${session?.threads ?? '?'} 线程${replaced}`,
+        `已加载 ${model.label} · ${backendLabel(session?.backend)} ${session?.threads ?? '?'} 线程${
+          replaced ? `，已卸载 ${replaced}${reason}` : ''
+        }`,
         'success',
       );
     } catch (error) {
@@ -217,11 +243,15 @@ export function EnginePanel() {
     }
   };
 
-  const unload = async () => {
-    await unloadModel();
+  const unload = async (modelId?: string, label?: string) => {
+    await unloadModel(modelId);
     await refresh();
-    setReleased(true);
-    toast('已卸载；WASM 内存要刷新页面才还给系统', 'info');
+    const left = useModelRuntime.getState().residents.length;
+    setReleased(left === 0);
+    toast(
+      label ? `已卸载 ${label}` : '已卸载全部模型；WASM 内存要刷新页面才还给系统',
+      'info',
+    );
   };
 
   const drop = async (model: LocalModel) => {
@@ -247,7 +277,7 @@ export function EnginePanel() {
       }
       await patch({ textMode: 'local' });
       const model = ALL_LOCAL_MODELS.find((item) => item.task === 'text' && item.id === prefs.textModelId);
-      if (model && resident?.modelId !== model.id && cache[model.id]?.[dtypeFor(model, backend)]) {
+      if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend)]) {
         await activate(model);
       }
       return;
@@ -259,14 +289,18 @@ export function EnginePanel() {
     const model = ALL_LOCAL_MODELS.find(
       (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
     );
-    if (model && resident?.modelId !== model.id && cache[model.id]?.[dtypeFor(model, backend)]) {
+    if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend)]) {
       await activate(model);
     }
   };
 
   const preset = PRESETS.text.find((item) => item.id === draft.preset);
   const textModel = ALL_LOCAL_MODELS.find((item) => item.id === prefs.textModelId);
-  const textReady = textModel ? cache[textModel.id]?.[dtypeFor(textModel, backend)] : false;
+  // A loaded session counts even when the cache scan ran before the weights
+  // were flushed, otherwise a just-loaded model still offers "去下载".
+  const textReady =
+    residents.some((row) => row.modelId === prefs.textModelId) ||
+    (textModel ? (cache[textModel.id]?.[dtypeFor(textModel, backend)] ?? false) : false);
   const cloudReady = hasKey(draft);
   const loadingModel = ALL_LOCAL_MODELS.find((model) => models[model.id]?.state === 'downloading');
   const usedPercent = usage && usage.quota > 0 ? Math.round(usage.ratio * 100) : 0;
@@ -280,7 +314,7 @@ export function EnginePanel() {
         ? `云端 · ${draft.model}`
         : '云端 · 还没填密钥'
       : `${textModel?.label ?? '未选择'}${
-          resident?.modelId === prefs.textModelId
+          residents.some((row) => row.modelId === prefs.textModelId)
             ? ' · 已加载'
             : textReady
               ? ' · 已下载，未加载'
@@ -303,10 +337,10 @@ export function EnginePanel() {
   const rowProps = {
     runtime: models,
     cache,
-    resident,
+    residents,
     backend,
     onActivate: activate,
-    onUnload: unload,
+    onUnload: (model: LocalModel) => unload(model.id, model.label),
     onDrop: drop,
     onClearAndRetry: clearAndRetry,
   };
@@ -449,44 +483,64 @@ export function EnginePanel() {
       <Panel
         id="models"
         title="本地模型"
-        hint="下载后点「加载」即选用，一次只驻留一个"
+        hint="下载后点「加载」即选用；文本与嵌入可同时驻留，超出内存预算才会卸掉另一侧"
         className="scroll-mt-24"
       >
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div
-              data-resident={resident?.modelId ?? ''}
-              className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-muted"
+              data-resident={residents.map((row) => row.modelId).join(' ')}
+              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted"
             >
               <span className="flex items-center gap-1.5">
                 <span
                   className={cn(
                     'h-1.5 w-1.5 rounded-full',
-                    resident ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]/70',
+                    residents.length > 0 ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]/70',
                   )}
                 />
                 内存中
               </span>
-              <span className="text-ink/80">
-                {loadingModel
-                  ? `${loadingModel.label} · 加载中 ${Math.round((loadingState?.progress ?? 0) * 100)}%`
-                  : resident
-                    ? (ALL_LOCAL_MODELS.find((item) => item.id === resident.modelId)?.label ?? '未知')
-                    : '无'}
-              </span>
-              {resident ? (
-                <span className="font-mono text-[10px] text-muted/65">
-                  {backendLabel(resident.backend)} · {resident.threads} 线程
+
+              {loadingModel ? (
+                <span className="text-ink/80">
+                  {loadingModel.label} · 加载中{' '}
+                  {Math.round((loadingState?.progress ?? 0) * 100)}%
                 </span>
               ) : null}
-              {resident ? (
-                <button
-                  type="button"
-                  onClick={() => void unload()}
-                  className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+
+              {residents.length === 0 && !loadingModel ? <span className="text-ink/80">无</span> : null}
+
+              {residents.map((row) => {
+                const model = findModel(row.modelId);
+                return (
+                  <span key={row.modelId} className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted/50">
+                      {row.task === 'text' ? '文本' : '嵌入'}
+                    </span>
+                    <span className="text-ink/80">{model?.label ?? row.modelId}</span>
+                    <span className="font-mono text-[10px] text-muted/60">
+                      {backendLabel(row.backend)} · {row.threads} 线程
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void unload(row.modelId, model?.label)}
+                      className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+                    >
+                      卸载
+                    </button>
+                  </span>
+                );
+              })}
+
+              {residents.length > 0 ? (
+                <span
+                  className="ml-auto font-mono text-[10px] text-muted/55"
+                  title="按权重体积估算的峰值，留出页面自身所需的空间"
                 >
-                  卸载
-                </button>
+                  {formatBytes(totalPeakMB(residents) * 1024 * 1024)} /{' '}
+                  {(RESIDENT_BUDGET_MB / 1024).toFixed(1)} GB
+                </span>
               ) : released ? (
                 <button
                   type="button"
@@ -572,10 +626,10 @@ export function EnginePanel() {
 type RowProps = {
   runtime: Record<string, ModelRuntimeState>;
   cache: Record<string, CacheStats>;
-  resident: ResidentInfo;
+  residents: ResidentInfo[];
   backend: Backend;
   onActivate: (model: LocalModel) => Promise<void>;
-  onUnload: () => Promise<void>;
+  onUnload: (model: LocalModel) => Promise<void>;
   onDrop: (model: LocalModel) => Promise<void>;
   onClearAndRetry: (model: LocalModel) => Promise<void>;
 };
@@ -606,7 +660,7 @@ function ModelRow({
   accent,
   runtime,
   cache,
-  resident,
+  residents,
   backend,
   onActivate,
   onUnload,
@@ -615,7 +669,7 @@ function ModelRow({
 }: { model: LocalModel; accent: boolean } & RowProps) {
   const state = runtime[model.id];
   const stats = cache[model.id];
-  const loadedNow = resident?.modelId === model.id;
+  const loadedNow = residents.some((row) => row.modelId === model.id);
   const dtype = dtypeFor(model, backend);
   const other = dtype === 'q8' ? 'fp16' : 'q8';
   // A just-loaded model is ready even if the cache scan ran a beat too early
@@ -667,7 +721,7 @@ function ModelRow({
 
         <div className="flex shrink-0 items-center gap-1.5">
           {loadedNow ? (
-            <Button variant="ghost" size="sm" onClick={() => void onUnload()}>
+            <Button variant="ghost" size="sm" onClick={() => void onUnload(model)}>
               <Power size={11} />
               卸载
             </Button>
