@@ -130,31 +130,36 @@ export async function activeEmbedder(): Promise<EmbedderInfo> {
   return { tag: 'hash', label: '哈希', dims: HASH_DIM };
 }
 
+/** The tag a record gets when the chosen encoder could not produce vectors. */
+const HASH_FALLBACK: EmbedderInfo = { tag: 'hash', label: '哈希（嵌入失败后的回退）', dims: HASH_DIM };
+
+/**
+ * Returns one vector per text or throws. It used to fall back to hashed vectors
+ * on failure, which silently mixed two spaces under one tag: the caller kept
+ * the model tag, and those records could never be matched by a real query.
+ * Falling back is now the caller's decision, because only it knows whether to
+ * re-tag the records.
+ */
 async function vectorize(texts: string[], embedder: EmbedderInfo): Promise<number[][]> {
   const { prefs } = useEngines.getState();
 
   if (embedder.tag.startsWith('local:')) {
     const model = findModel(prefs.embeddingModelId);
-    if (!model) return texts.map(hashEmbed);
-    try {
-      const { vectors } = await embedTexts(model, texts, {
-        source: prefs.source,
-        backendPreference: prefs.backend,
-        report: false,
-      });
-      return vectors;
-    } catch {
-      return texts.map(hashEmbed);
-    }
+    if (!model) throw new Error('本地嵌入模型不在目录里');
+    const { vectors } = await embedTexts(model, texts, {
+      source: prefs.source,
+      backendPreference: prefs.backend,
+      report: false,
+    });
+    if (vectors.length !== texts.length) throw new Error('编码器返回的向量数量不足');
+    return vectors;
   }
 
   if (embedder.tag.startsWith('api:')) {
     const endpoint = useEndpoints.getState().endpoints.embedding;
-    try {
-      return await requestEmbeddings({ endpoint, input: texts });
-    } catch {
-      return texts.map(hashEmbed);
-    }
+    const vectors = await requestEmbeddings({ endpoint, input: texts });
+    if (vectors.length !== texts.length) throw new Error('编码器返回的向量数量不足');
+    return vectors;
   }
 
   return texts.map(hashEmbed);
@@ -187,8 +192,14 @@ export async function remember(input: {
   const text = input.text.trim().slice(0, 600);
   if (text.length < 6) return null;
 
-  const embedder = await activeEmbedder();
-  const [vector] = await vectorize([text], embedder);
+  let embedder = await activeEmbedder();
+  let vector: number[];
+  try {
+    [vector] = await vectorize([text], embedder);
+  } catch {
+    embedder = HASH_FALLBACK;
+    vector = hashEmbed(text);
+  }
 
   const record: MemoryRecord = {
     id: opaqueId('mem'),
@@ -253,7 +264,14 @@ export async function retrieve(
 
   if (!pool.length) return [];
 
-  const [probe] = await vectorize([query], embedder);
+  let probe: number[];
+  try {
+    [probe] = await vectorize([query], embedder);
+  } catch {
+    // The encoder is unavailable; an empty context is honest, comparing the
+    // query in another space would return noise with confident scores.
+    return [];
+  }
   return pool
     .map((record) => ({ record, score: cosine(probe, record.vector) }))
     .filter((hit) => hit.score > minScore)
@@ -290,20 +308,19 @@ export async function rememberDocument(input: {
     throw new Error(`文档过长（${chunks.length} 段，上限 ${MAX_CHUNKS} 段），请拆分后再入库`);
   }
 
-  const selected = await activeEmbedder();
-  const vectors = await vectorize(
-    chunks.map((chunk) => chunk.text),
-    selected,
-  );
-
-  // A short batch means the encoder failed partway. Mixing hash vectors under
-  // a model tag would put two vector spaces in one index, so fall back whole.
-  const embedder: EmbedderInfo =
-    vectors.length === chunks.length
-      ? selected
-      : { tag: 'hash', label: '哈希（嵌入失败后的回退）', dims: HASH_DIM };
-  const vectorsFinal =
-    vectors.length === chunks.length ? vectors : chunks.map((chunk) => hashEmbed(chunk.text));
+  // The whole document goes into one space: either every chunk is encoded by
+  // the selected encoder, or all of them fall back to hash and are tagged so.
+  let embedder = await activeEmbedder();
+  let vectorsFinal: number[][];
+  try {
+    vectorsFinal = await vectorize(
+      chunks.map((chunk) => chunk.text),
+      embedder,
+    );
+  } catch {
+    embedder = HASH_FALLBACK;
+    vectorsFinal = chunks.map((chunk) => hashEmbed(chunk.text));
+  }
 
   const docId = opaqueId('doc');
   const title = input.title.trim().slice(0, 80) || `未命名资料 ${new Date().toLocaleDateString('zh-CN')}`;

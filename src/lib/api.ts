@@ -31,18 +31,18 @@ export async function requestImages(input: {
   return data.images ?? [];
 }
 
-export async function requestEmbeddings(input: {
-  endpoint: Endpoint;
-  input: string[];
-}): Promise<number[][]> {
+/** Matches the cap `/api/embed` enforces, so one ingest cannot be rejected. */
+const EMBED_BATCH = 32;
+
+async function embedBatch(endpoint: Endpoint, input: string[]): Promise<number[][]> {
   const response = await fetch('/api/embed', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      baseUrl: input.endpoint.baseUrl,
-      apiKey: input.endpoint.apiKey,
-      model: input.endpoint.model,
-      input: input.input,
+      baseUrl: endpoint.baseUrl,
+      apiKey: endpoint.apiKey,
+      model: endpoint.model,
+      input,
     }),
   });
 
@@ -53,6 +53,24 @@ export async function requestEmbeddings(input: {
 
   if (!response.ok) throw new Error(data.error || `嵌入失败（${response.status}）`);
   return data.embeddings ?? [];
+}
+
+/**
+ * Encodes in batches of 32. A long document used to go out as one request and
+ * the route answered 413, which the caller swallowed as "encoder failed" —
+ * the chunks were then stored under the API embedder tag with hash vectors and
+ * became unreachable. Batching keeps every chunk in the same space.
+ */
+export async function requestEmbeddings(input: {
+  endpoint: Endpoint;
+  input: string[];
+}): Promise<number[][]> {
+  const vectors: number[][] = [];
+  for (let index = 0; index < input.input.length; index += EMBED_BATCH) {
+    const slice = input.input.slice(index, index + EMBED_BATCH);
+    vectors.push(...(await embedBatch(input.endpoint, slice)));
+  }
+  return vectors;
 }
 
 export async function transcribe(input: {
