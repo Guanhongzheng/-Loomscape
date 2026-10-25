@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chunkText, composeRagContext, usedCitations } from '@/lib/rag';
+import { chunkText, systemPrompt, composeRagContext, usedCitations } from '@/lib/rag';
 
 const paragraph = (seed: string, length = 160) => `${seed}。${'这是一段测试内容，用来验证分块边界。'.repeat(Math.ceil(length / 18)).slice(0, length)}`;
 
@@ -103,5 +103,20 @@ describe('usedCitations', () => {
 
   it('handles an answer with no markers', () => {
     expect(usedCitations('一句普通的话。', 4)).toEqual([]);
+  });
+});
+
+describe('systemPrompt', () => {
+  it('uses the plain assistant prompt when nothing was retrieved', () => {
+    const prompt = systemPrompt('');
+    // Talking about "fragments" with an empty knowledge base is what made the
+    // model answer a different question.
+    expect(prompt).not.toContain('片段');
+  });
+
+  it('appends the retrieved context when there is some', () => {
+    const prompt = systemPrompt('[1] 《笔记》：夜里十点开门');
+    expect(prompt).toContain('片段');
+    expect(prompt).toContain('夜里十点开门');
   });
 });

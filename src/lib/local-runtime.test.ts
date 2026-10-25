@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { dtypeFor, isWeightRequest, runtimeInfo, threadCount, weightFile } from '@/lib/local-runtime';
+import {
+  chatPrompt,
+  dtypeFor,
+  isWeightRequest,
+  runtimeInfo,
+  threadCount,
+  weightFile,
+} from '@/lib/local-runtime';
 import { LOCAL_TEXT, sizeFor } from '@/lib/engines';
 
 describe('threadCount', () => {
@@ -97,5 +104,27 @@ describe('isWeightRequest', () => {
 
   it('survives a malformed url', () => {
     expect(isWeightRequest(`${repo}/resolve/master/onnx/model_quantized.onnx`, repo)).toBe(false);
+  });
+});
+
+describe('chatPrompt', () => {
+  it('renders every turn and leaves the assistant slot open', () => {
+    const prompt = chatPrompt('你是编辑', [
+      { role: 'user', content: '写一句开场' },
+      { role: 'assistant', content: '灯先亮了。' },
+      { role: 'user', content: '再短一点' },
+    ]);
+    expect(prompt.match(/<\|im_start\|>user/g)).toHaveLength(2);
+    expect(prompt).toContain('<|im_start|>assistant\n灯先亮了。<|im_end|>');
+    expect(prompt.endsWith('<|im_start|>assistant\n')).toBe(true);
+  });
+
+  it('does not repeat the system block for each turn', () => {
+    const prompt = chatPrompt('你是编辑', [
+      { role: 'user', content: '一' },
+      { role: 'assistant', content: '二' },
+      { role: 'user', content: '三' },
+    ]);
+    expect(prompt.match(/<\|im_start\|>system/g)).toHaveLength(1);
   });
 });

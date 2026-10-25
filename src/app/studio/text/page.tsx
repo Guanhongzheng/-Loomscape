@@ -149,7 +149,9 @@ export default function TextWorkbench() {
     }
     if (busy) return;
 
-    const recalled = memoryOn ? await retrieve(text, owner, { topK: 4 }) : [];
+    const recalled = memoryOn
+      ? await retrieve(text, owner, { topK: 4, kinds: ['text', 'doc', 'story'] })
+      : [];
     setHits(recalled.length);
     const context = composeRagContext(toRagSources(recalled));
     const prompt = `${text}\n\n语气：${tone}。篇幅约 ${length * 6} 字。`;

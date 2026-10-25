@@ -482,7 +482,7 @@ export async function embedTexts(
   return { vectors: rows as number[][], backend };
 }
 
-function chatPrompt(system: string, turns: Array<{ role: string; content: string }>): string {
+export function chatPrompt(system: string, turns: Array<{ role: string; content: string }>): string {
   const blocks = [`<|im_start|>system\n${system}<|im_end|>`];
   for (const turn of turns) {
     blocks.push(`<|im_start|>${turn.role}\n${turn.content}<|im_end|>`);
@@ -530,7 +530,10 @@ export async function streamLocal(options: {
     do_sample: true,
     temperature: options.temperature ?? 0.7,
     top_p: 0.9,
-    repetition_penalty: 1.05,
+    // 1.05 is not enough for a 0.5B model: it settles into a phrase and
+    // repeats it. The n-gram guard catches whole clauses the penalty misses.
+    repetition_penalty: 1.18,
+    no_repeat_ngram_size: 6,
     streamer,
   });
 

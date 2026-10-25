@@ -3,11 +3,10 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { assertPublicUrl, jsonError, originAllowed, resolve } from '@/lib/server/upstream';
 import { buildLanguageModel } from '@/lib/server/model';
+import { sanitiseMessages, type ChatMessage } from '@/lib/server/messages';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-type Incoming = { role: 'user' | 'assistant' | 'system'; content: string };
 
 const STYLE_GUIDE: Record<string, string[]> = {
   克制: [
@@ -27,29 +26,6 @@ const STYLE_GUIDE: Record<string, string[]> = {
   ],
 };
 
-function sanitise(input: unknown): Incoming[] {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const row = item as {
-        role?: string;
-        content?: string;
-        parts?: Array<{ type?: string; text?: string }>;
-      };
-      const role = row.role === 'system' || row.role === 'assistant' ? row.role : 'user';
-      const fromParts = (row.parts ?? [])
-        .filter((part) => part?.type === 'text' && typeof part.text === 'string')
-        .map((part) => part.text)
-        .join('');
-      const content = (row.content ?? fromParts ?? '').trim();
-      if (!content) return null;
-      return { role, content: content.slice(0, 24_000) } as Incoming;
-    })
-    .filter((row): row is Incoming => row !== null)
-    .slice(-24);
-}
-
 export async function POST(request: NextRequest) {
   if (!originAllowed(request)) return jsonError('来源不被允许', 403);
 
@@ -68,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   if (!body) return jsonError('请求体不是合法 JSON');
 
-  const messages = sanitise(body.messages);
+  const messages: ChatMessage[] = sanitiseMessages(body.messages);
   if (messages.length === 0) return jsonError('缺少 messages');
 
   const config = resolve('text', body);

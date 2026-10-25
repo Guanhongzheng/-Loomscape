@@ -160,6 +160,18 @@ export function usedCitations(answer: string, count: number): number[] {
   return Array.from(found).sort((a, b) => a - b);
 }
 
+/** Used when nothing was retrieved: talking about "fragments" would be a lie. */
+export const ASSISTANT_PROMPT =
+  '你是一位中文创作助理。直接回答用户的问题，必要时先确认你理解到的意图；' +
+  '不确定的信息就说不知道，不要编造。语气克制，不复述问题，不写开场白，不要重复已经说过的话。';
+
 export const RAG_SYSTEM_PROMPT =
-  '你是一位中文创作助理。先看检索片段，再用自己的话回答；片段与问题无关时就忽略它，不要假装引用。' +
-  '引用片段时在句末写方括号编号，例如 [2]。语气克制，不用开场白复述问题。';
+  '你是一位中文创作助理。下面的片段只是参考，不是必须使用的内容；' +
+  '片段与问题无关时直接忽略，用自己的话回答，不要为了用上片段而牵强附会。' +
+  '确实引用了某条片段时，在句末标注它的编号，例如 [2]；没有引用就不要标注。' +
+  '语气克制，不复述问题，不写开场白，不要重复已经说过的话。';
+
+/** Picks the system prompt that matches whether retrieval produced anything. */
+export function systemPrompt(context: string): string {
+  return context.trim() ? `${RAG_SYSTEM_PROMPT}\n\n${context}` : ASSISTANT_PROMPT;
+}

@@ -38,7 +38,7 @@ import {
   type EmbedderInfo,
   type RecallHit,
 } from '@/lib/memory';
-import { composeRagContext, RAG_SYSTEM_PROMPT, usedCitations } from '@/lib/rag';
+import { composeRagContext, systemPrompt as buildSystem, usedCitations } from '@/lib/rag';
 import { cn } from '@/lib/cn';
 
 type ChatMode = 'cloud' | 'local' | 'retrieval';
@@ -115,6 +115,52 @@ function retrievalAnswer(hits: RecallHit[]): string {
   return ['未配置模型，先给出检索结果（按相关度排序）：', ...lines].join('\n\n');
 }
 
+/**
+ * Turns the SDK transcript into one bubble per exchange. With tools enabled a
+ * single answer arrives as several assistant messages (text, tool call, text);
+ * rendering each as its own bubble looked like the reply repeated itself.
+ */
+function cloudTurns(messages: Message[], sources: Map<number, RecallHit[]>): Turn[] {
+  const out: Turn[] = [];
+  let asked = 0;
+
+  for (const message of messages) {
+    const text = textOf(message).trim();
+    const isTool = (message.parts ?? []).some((part) => part.type === 'tool-invocation');
+
+    if (message.role !== 'assistant') {
+      asked += 1;
+      out.push({
+        id: message.id,
+        role: 'user',
+        text,
+        at: (message.createdAt ?? new Date()).getTime(),
+      });
+      continue;
+    }
+
+    const previous = out[out.length - 1];
+    if (previous && previous.role === 'assistant') {
+      if (text) previous.text = previous.text ? `${previous.text}\n\n${text}` : text;
+      previous.tools = message;
+      continue;
+    }
+
+    if (!text && !isTool) continue;
+
+    out.push({
+      id: message.id,
+      role: 'assistant',
+      text,
+      at: (message.createdAt ?? new Date()).getTime(),
+      tools: message,
+      sources: sources.get(asked - 1),
+    });
+  }
+
+  return out;
+}
+
 export default function ChatWorkbench() {
   const { user } = useAuth();
   const endpoints = useEndpoints((state) => state.endpoints);
@@ -138,6 +184,9 @@ export default function ChatWorkbench() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pendingContext = useRef('');
+  // Retrieval is awaited before the transcript updates, so a fast double Enter
+  // used to send the same question twice and the model answered its own echo.
+  const sending = useRef(false);
 
   const owner = user?.id ?? 'local';
   const localMode = prefs.textMode === 'local';
@@ -148,7 +197,7 @@ export default function ChatWorkbench() {
     maxSteps: 3,
     experimental_prepareRequestBody: ({ messages: current }) => ({
       messages: current,
-      system: `${RAG_SYSTEM_PROMPT}\n\n${pendingContext.current}`.trim(),
+      system: buildSystem(pendingContext.current),
       temperature: 0.7,
       maxTokens: 1400,
       baseUrl: endpoints.text.baseUrl,
@@ -197,9 +246,17 @@ export default function ChatWorkbench() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || sending.current) return;
+    sending.current = true;
 
-    const hits = ragOn ? await retrieve(text, owner, { topK: 4 }) : [];
+    const hits = ragOn
+      ? await retrieve(text, owner, {
+          topK: 4,
+          // 'note' is where finished answers are stored. Feeding them back as
+          // sources made the model quote itself, which read as repetition.
+          kinds: ['doc', 'text', 'story', 'voice'],
+        })
+      : [];
     const context = composeRagContext(toRagSources(hits));
     setInput('');
 
@@ -207,6 +264,7 @@ export default function ChatWorkbench() {
       const model = localModel;
       if (!model) {
         toast('设置里还没有选择本地模型', 'error');
+        sending.current = false;
         return;
       }
       const id = `local_${Date.now()}`;
@@ -219,7 +277,13 @@ export default function ChatWorkbench() {
       setLocalBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
-      const system = `${RAG_SYSTEM_PROMPT}\n\n${context}`.trim();
+      const system = buildSystem(context);
+      // The local path used to send only the newest message, so a follow-up
+      // question arrived with no conversation behind it.
+      const history = localTurns
+        .filter((turn) => turn.text.trim())
+        .slice(-6)
+        .map((turn) => ({ role: turn.role, content: turn.text.slice(0, 800) }));
 
       let produced = '';
       try {
@@ -228,9 +292,9 @@ export default function ChatWorkbench() {
           source: prefs.source,
           backendPreference: prefs.backend,
           system,
-          turns: [{ role: 'user', content: text }],
-          maxTokens: 700,
-          temperature: 0.7,
+          turns: [...history, { role: 'user', content: text }],
+          maxTokens: 360,
+          temperature: 0.6,
           signal: controller.signal,
           onToken: (chunk) => {
             produced += chunk;
@@ -246,6 +310,7 @@ export default function ChatWorkbench() {
         toast(err instanceof Error ? err.message : '本地生成失败', 'error');
       } finally {
         setLocalBusy(false);
+        sending.current = false;
       }
       return;
     }
@@ -265,15 +330,20 @@ export default function ChatWorkbench() {
           sources: hits,
         },
       ]);
+      sending.current = false;
       return;
     }
 
-    const pair = Math.floor(messages.length / 2);
+    const pair = messages.filter((message) => message.role === 'user').length;
     if (hits.length) {
       setCloudSources((rows) => new Map(rows).set(pair, hits));
     }
     pendingContext.current = context;
-    await append({ role: 'user', content: text });
+    try {
+      await append({ role: 'user', content: text });
+    } finally {
+      sending.current = false;
+    }
   };
 
   const cancel = () => {
@@ -320,20 +390,11 @@ export default function ChatWorkbench() {
     toast('已移除该资料', 'success');
   };
 
-  const turns: Turn[] =
-    localMode || localTurns.length
-      ? localTurns
-      : messages.map((message, index) => ({
-          id: message.id,
-          role: message.role === 'assistant' ? 'assistant' : 'user',
-          text: textOf(message),
-          at: (message.createdAt ?? new Date()).getTime(),
-          tools: message.role === 'assistant' ? message : undefined,
-          sources:
-            message.role === 'assistant'
-              ? cloudSources.get(Math.floor(index / 2))
-              : undefined,
-        }));
+  // Cloud replies must win once they exist: the old condition kept showing the
+  // local transcript (or an earlier retrieval-only exchange) after the engine
+  // was switched, so the new answers were invisible.
+  const cloudView = cloudTurns(messages, cloudSources);
+  const turns: Turn[] = localMode ? localTurns : cloudView.length ? cloudView : localTurns;
 
   // A stored model name without a key would claim an engine that never runs.
   const engineLabel = localMode
