@@ -1,11 +1,13 @@
 'use client';
 
 import {
-  RESIDENT_BUDGET_MB,
   findModel,
-  totalPeakMB,
+  fitsTogether,
+  poolBudgetMB,
+  poolOf,
+  poolPeakMB,
+  sessionPeakMB,
   useModelRuntime,
-  weightPeakMB,
   type Backend,
   type LocalModel,
   type ModelDtype,
@@ -358,8 +360,16 @@ async function makeRoom(next: Resident): Promise<void> {
   const sameTask = residents.filter((row) => row.task === next.task && row.modelId !== next.modelId);
   for (const row of sameTask) await release(row);
 
-  while (residents.length > 0 && totalPeakMB(residents) + next.peakMB > RESIDENT_BUDGET_MB) {
-    await release(residents[0]);
+  // Only the pool this session will live in decides who has to go. A GPU
+  // session must never evict a WASM one: they do not compete for the same
+  // memory, and adding them together is what made WebGPU look unusable.
+  const pool = poolOf(next.backend);
+  const budget = poolBudgetMB(pool);
+  for (;;) {
+    const occupants = residents.filter((row) => poolOf(row.backend) === pool);
+    if (occupants.length === 0) break;
+    if (poolPeakMB(residents, pool) + next.peakMB <= budget) break;
+    await release(occupants[0]);
   }
 }
 
@@ -405,8 +415,25 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     key,
     backend,
     threads,
-    peakMB: weightPeakMB(model, backend),
+    peakMB: sessionPeakMB(model, backend),
   };
+
+  // A session that cannot fit its own pool used to be attempted anyway: the
+  // eviction loop only ran when something else was loaded, so a too-large
+  // model went straight to `Aborted()` and took the tab with it. Refusing here
+  // turns that into a card that says why.
+  if (!fitsTogether([model], backend)) {
+    const pool = poolOf(backend);
+    const needGB = ((poolPeakMB([], pool) + next.peakMB) / 1024).toFixed(1);
+    const capGB = (poolBudgetMB(pool) / 1024).toFixed(1);
+    const message = `${model.label} 估算需要约 ${needGB}GB ${
+      pool === 'gpu' ? '显存' : 'WASM 内存'
+    }，超过本机上限 ${capGB}GB`;
+    if (options.report) {
+      useModelRuntime.getState().set(model.id, { state: 'error', progress: 0, backend, message });
+    }
+    throw new Error(message);
+  }
 
   const wasmBackend = mod.env.backends.onnx.wasm;
   if (wasmBackend) wasmBackend.numThreads = threads;

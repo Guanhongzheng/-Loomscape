@@ -1,6 +1,6 @@
 {
   "name": "loomscape",
-  "version": "0.6.0",
+  "version": "0.6.2",
   "private": true,
   "description": "A multimodal workspace for writers, designers and editors.",
   "scripts": {

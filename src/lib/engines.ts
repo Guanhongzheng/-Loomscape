@@ -199,43 +199,117 @@ export type ModelRuntimeState = {
 
 /**
  * A loaded session. At most one per task: a second decoder never fits, but a
- * decoder and an embedder can share the heap when the budget below allows it.
+ * decoder and an embedder can coexist — in different pools when their backends
+ * differ, in the same pool when that pool has room.
  */
 export type ResidentInfo = {
   modelId: string;
   task: EngineTask;
   backend: Backend;
   threads: number;
-  /** Estimated peak contribution of this session, in MB. */
+  /** Estimated peak contribution inside its own pool, in MB. */
   peakMB: number;
 };
 
 /**
- * The wasm32 heap is 4GB and the page needs part of it, so model sessions are
- * budgeted rather than left to the allocator. `RUNTIME_BASE_MB` covers the
- * runtime and JS side once; each session adds a multiple of its weight size.
+ * Sessions are budgeted per memory pool, because the two backends do not spend
+ * the same memory. A WASM session lives in the 4GB wasm32 linear memory; a
+ * WebGPU session uploads its weights to GPU buffers and keeps only a thin host
+ * envelope behind. Summing both against one number is what made a WebGPU
+ * decoder look like it could not share a machine with an embedder: 3× the fp16
+ * weights (3.4GB) exceeded a budget that never described GPU memory.
  */
-export const RESIDENT_BUDGET_MB = 3400;
+export type ResidentPool = 'wasm' | 'gpu';
+
+export function poolOf(backend: Backend): ResidentPool {
+  return backend === 'webgpu' ? 'gpu' : 'wasm';
+}
+
+/** How a pool is named in the status line, so every row says the same thing. */
+export const POOL_LABEL: Record<ResidentPool, string> = {
+  wasm: 'WASM',
+  gpu: '显存',
+};
+
+/** wasm32 linear memory is 4GB; the page itself needs the remainder. */
+export const WASM_BUDGET_MB = 3400;
+/**
+ * Standing in for VRAM, which the platform does not report. Discrete cards have
+ * far more, integrated ones share system memory, so this is a ceiling rather
+ * than a measurement: it is high enough to hold a decoder plus an embedder and
+ * low enough to catch a stack that would spill out of a 16GB machine.
+ */
+export const GPU_BUDGET_MB = 6144;
+/** ORT runtime, tokenizers and the JS side, charged to the wasm pool once. */
 export const RUNTIME_BASE_MB = 600;
+/** Buffers, staging copies and the command encoder, charged to the gpu pool once. */
+export const GPU_BASE_MB = 256;
 
 /**
- * Peak footprint of a session relative to its weights. Calibrated on two
- * measurements: 0.5B/int8 peaked at ~2.4GB of renderer memory, and 1.7B/int8
- * aborted at the 4GB ceiling. Three times the weight size reproduces both.
+ * Peak footprint of one session inside its pool.
+ *
+ * WASM: three times the weights. Calibrated on two measurements — 0.5B/int8
+ * peaked at ~2.4GB of renderer memory and 1.7B/int8 aborted at the 4GB ceiling
+ * — because int8 decoding keeps a dequantised copy, per-thread arenas and the
+ * KV cache on the same heap as the weights.
+ *
+ * GPU: roughly the weights once. The tensors are uploaded as fp16 buffers and
+ * stay there, so the 15% plus a fixed slab covers activations and a short KV
+ * cache instead of a tripling.
  */
-export function weightPeakMB(model: LocalModel, backend: 'auto' | Backend): number {
-  return Math.round(sizeFor(model, backend) * 3);
+export function sessionPeakMB(model: LocalModel, backend: 'auto' | Backend): number {
+  const weights = sizeFor(model, backend);
+  return backend === 'webgpu' ? Math.round(weights * 1.15 + 128) : Math.round(weights * 3);
 }
 
-export function totalPeakMB(residents: ResidentInfo[]): number {
-  return RUNTIME_BASE_MB + residents.reduce((sum, row) => sum + row.peakMB, 0);
+export function poolBudgetMB(pool: ResidentPool): number {
+  return pool === 'gpu' ? GPU_BUDGET_MB : WASM_BUDGET_MB;
 }
 
-/** Whether a set of models can be held at once, base overhead counted once. */
-export function fitsTogether(models: LocalModel[], backend: 'auto' | Backend): boolean {
-  const peak =
-    RUNTIME_BASE_MB + models.reduce((sum, model) => sum + weightPeakMB(model, backend), 0);
-  return peak <= RESIDENT_BUDGET_MB;
+export function poolBaseMB(pool: ResidentPool): number {
+  return pool === 'gpu' ? GPU_BASE_MB : RUNTIME_BASE_MB;
+}
+
+/** Fill level of one pool, its base overhead included exactly once. */
+export function poolPeakMB(residents: ResidentInfo[], pool: ResidentPool): number {
+  return (
+    poolBaseMB(pool) +
+    residents
+      .filter((row) => poolOf(row.backend) === pool)
+      .reduce((sum, row) => sum + row.peakMB, 0)
+  );
+}
+
+/** Pools currently holding a session, in a stable order for display. */
+export function usedPools(residents: ResidentInfo[]): ResidentPool[] {
+  const used = new Set(residents.map((row) => poolOf(row.backend)));
+  return (['wasm', 'gpu'] as ResidentPool[]).filter((pool) => used.has(pool));
+}
+
+/**
+ * Whether a set of models can be held at once. Each pool is checked on its own:
+ * a GPU session does not consume wasm heap, so the two never add up.
+ */
+export function fitsTogether(models: LocalModel[], backend: Backend): boolean {
+  const load: Record<ResidentPool, number> = { wasm: 0, gpu: 0 };
+  for (const model of models) load[poolOf(backend)] += sessionPeakMB(model, backend);
+  return (['wasm', 'gpu'] as ResidentPool[]).every(
+    (pool) => load[pool] === 0 || poolBaseMB(pool) + load[pool] <= poolBudgetMB(pool),
+  );
+}
+
+/**
+ * Whether `model` can join what is already in memory. Unlike `fitsTogether`
+ * this reads each resident's own backend, so a GPU load is not charged for the
+ * WASM sessions next to it, and a same-task load is free because it replaces
+ * the session it would otherwise compete with.
+ */
+export function roomFor(residents: ResidentInfo[], model: LocalModel, backend: Backend): boolean {
+  const pool = poolOf(backend);
+  const occupied = residents
+    .filter((row) => poolOf(row.backend) === pool && row.task !== model.task)
+    .reduce((sum, row) => sum + row.peakMB, 0);
+  return poolBaseMB(pool) + occupied + sessionPeakMB(model, backend) <= poolBudgetMB(pool);
 }
 
 type RuntimeStore = {

@@ -9,8 +9,9 @@ import { useAuth, wasSignedOut } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
 import {
   ALL_LOCAL_MODELS,
-  fitsTogether,
   findModel,
+  poolOf,
+  roomFor,
   useEngines,
   useModelRuntime,
   type LocalModel,
@@ -151,16 +152,14 @@ export function StudioShell({
           continue;
         }
 
-        // Pairing is budgeted: a big embedder next to the decoder would leave
-        // the tab with nothing for activations, so it stays unloaded until the
-        // user asks for it explicitly.
-        const loaded = useModelRuntime
-          .getState()
-          .residents.map((row) => findModel(row.modelId))
-          .filter((row): row is LocalModel => Boolean(row));
-        if (!fitsTogether([...loaded, candidate], backend)) {
+        // Pairing is budgeted per pool: a GPU session does not spend wasm heap,
+        // so the check reads each resident's own backend instead of assuming
+        // both sides run where the preference points.
+        if (!roomFor(useModelRuntime.getState().residents, candidate, backend)) {
           toast(
-            `${candidate.label} 与已加载的模型超出内存预算，需要时在设置里手动切换`,
+            `${candidate.label} 与已加载的模型超出${
+              poolOf(backend) === 'gpu' ? '显存' : ' WASM 内存'
+            }预算，需要时在设置里手动切换`,
             'info',
           );
           continue;

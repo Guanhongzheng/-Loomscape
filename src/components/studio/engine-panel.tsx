@@ -11,19 +11,25 @@ import {
   ALL_LOCAL_MODELS,
   LOCAL_EMBEDDINGS,
   LOCAL_TEXT,
+  POOL_LABEL,
   RETIRED_MODELS,
-  RESIDENT_BUDGET_MB,
   findModel,
-  fitsTogether,
   formatBytes,
+  poolBudgetMB,
+  poolOf,
+  poolPeakMB,
+  // `roomFor` already means "disk space" in this file; the memory question is
+  // a different one and gets its own name.
+  roomFor as memoryRoomFor,
   sizeFor,
-  totalPeakMB,
+  usedPools,
   useEngines,
   useModelRuntime,
   type Backend,
   type EnginePrefs,
   type LocalModel,
   type ModelRuntimeState,
+  type ResidentPool,
   type ResidentInfo,
 } from '@/lib/engines';
 import {
@@ -171,11 +177,17 @@ export function EnginePanel() {
 
     // Say it before the download starts, not after: a big embedder will push
     // the decoder out, and finding that out at 543MB is too late.
-    const other = residents.find((row) => row.task !== model.task);
+    const other = residents.find(
+      (row) => row.task !== model.task && poolOf(row.backend) === poolOf(backend),
+    );
     const otherModel = other ? findModel(other.modelId) : undefined;
-    if (otherModel && !fitsTogether([otherModel, model], backend)) {
+    // Sessions only compete inside one pool: a GPU decoder and a WASM embedder
+    // are budgeted separately, so they never evict each other.
+    if (other && otherModel && !memoryRoomFor(residents, model, backend)) {
       toast(
-        `加载 ${model.label} 会先卸载 ${otherModel.label}：两个会话合计超出内存预算`,
+        `加载 ${model.label} 会先卸载 ${otherModel.label}：两个会话合计超出${
+          poolOf(backend) === 'gpu' ? '显存' : ' WASM 内存'
+        }`,
         'info',
       );
     }
@@ -233,11 +245,11 @@ export function EnginePanel() {
       const replaced = dropped
         .map((row) => findModel(row.modelId)?.label ?? row.modelId)
         .join('、');
-      const reason = dropped.some((row) => row.task === 'text')
-        ? '（内存预算不足，文本已切回云端）'
-        : dropped.some((row) => row.task === 'embedding')
-          ? '（内存预算不足，嵌入已切回哈希）'
-          : '';
+      const reason = dropped.length
+        ? `（${dropped[0].backend === 'webgpu' ? '显存' : 'WASM 内存'}预算不足，${
+            dropped.some((row) => row.task === 'text') ? '文本已切回云端' : '嵌入已切回哈希'
+          }）`
+        : '';
       toast(
         `已加载 ${model.label} · ${backendLabel(session?.backend)} ${session?.threads ?? '?'} 线程${
           replaced ? `，已卸载 ${replaced}${reason}` : ''
@@ -491,7 +503,7 @@ export function EnginePanel() {
       <Panel
         id="models"
         title="本地模型"
-        hint="下载后点「加载」即选用；文本与嵌入可同时驻留，超出内存预算才会卸掉另一侧"
+        hint="下载后点「加载」即选用；文本与嵌入可同时驻留，只有同一个内存池装不下才会卸掉另一侧"
         className="scroll-mt-24"
       >
         <div className="space-y-4">
@@ -542,12 +554,22 @@ export function EnginePanel() {
               })}
 
               {residents.length > 0 ? (
-                <span
-                  className="ml-auto font-mono text-[10px] text-muted/55"
-                  title="按权重体积估算的峰值，留出页面自身所需的空间"
-                >
-                  {formatBytes(totalPeakMB(residents) * 1024 * 1024)} /{' '}
-                  {(RESIDENT_BUDGET_MB / 1024).toFixed(1)} GB
+                // One figure per pool: a GPU session does not consume the wasm
+                // heap, so a single "x / 3.3 GB" would read as an overload.
+                <span className="ml-auto flex flex-wrap items-center gap-x-3 font-mono text-[10px] text-muted/55">
+                  {usedPools(residents).map((pool) => (
+                    <span
+                      key={pool}
+                      title={
+                        pool === 'gpu'
+                          ? 'WebGPU 会话的权重与激活在 GPU 缓冲里，与本机 WASM 堆分开计算'
+                          : 'WASM 会话共享 wasm32 的 4GB 线性内存，已为页面留出余量'
+                      }
+                    >
+                      {POOL_LABEL[pool]} {formatBytes(poolPeakMB(residents, pool) * 1024 * 1024)} /{' '}
+                      {(poolBudgetMB(pool) / 1024).toFixed(1)} GB
+                    </span>
+                  ))}
                 </span>
               ) : released ? (
                 <button

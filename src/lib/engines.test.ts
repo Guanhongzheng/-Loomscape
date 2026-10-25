@@ -2,18 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_LOCAL_MODELS,
   DEFAULT_ENGINE_PREFS,
+  GPU_BASE_MB,
   LOCAL_EMBEDDINGS,
   LOCAL_TEXT,
-  RESIDENT_BUDGET_MB,
   RETIRED_MODELS,
   RUNTIME_BASE_MB,
+  WASM_BUDGET_MB,
   findModel,
   fitsTogether,
   normalisePrefs,
+  poolPeakMB,
+  roomFor,
+  sessionPeakMB,
   sizeFor,
-  totalPeakMB,
   useModelRuntime,
-  weightPeakMB,
+  usedPools,
 } from '@/lib/engines';
 
 describe('local catalogue', () => {
@@ -111,27 +114,59 @@ describe('memory budget', () => {
   const base = findModel('bge-base-zh')!;
   const m3 = findModel('bge-m3')!;
 
-  it('fits a decoder and a small embedder in one heap', () => {
+  const row = (model: typeof text, backend: 'wasm' | 'webgpu') => ({
+    modelId: model.id,
+    task: model.task,
+    backend,
+    threads: 2,
+    peakMB: sessionPeakMB(model, backend),
+  });
+
+  it('fits a decoder and an embedder in the wasm heap', () => {
     expect(fitsTogether([text, small], 'wasm')).toBe(true);
     expect(fitsTogether([text, base], 'wasm')).toBe(true);
   });
 
-  it('refuses the pair that would blow the wasm ceiling', () => {
+  it('refuses the wasm pair that would blow the 4GB ceiling', () => {
     // 0.6B + M3 leaves under 100MB between the estimate and 4GB.
     expect(fitsTogether([text, m3], 'wasm')).toBe(false);
   });
 
-  it('counts the runtime overhead exactly once', () => {
-    expect(totalPeakMB([])).toBe(RUNTIME_BASE_MB);
-    const residents = [
-      { modelId: text.id, task: 'text' as const, backend: 'wasm' as const, threads: 2, peakMB: weightPeakMB(text, 'wasm') },
-      { modelId: base.id, task: 'embedding' as const, backend: 'wasm' as const, threads: 2, peakMB: weightPeakMB(base, 'wasm') },
-    ];
-    expect(totalPeakMB(residents)).toBeLessThanOrEqual(RESIDENT_BUDGET_MB);
+  it('allows the same pair on WebGPU, where sessions do not share that heap', () => {
+    // Regression: 3× the fp16 weights (3.4GB) used to be charged against the
+    // wasm budget, so a WebGPU decoder looked like it could not coexist with
+    // anything — even though its weights sit in GPU buffers.
+    expect(fitsTogether([text], 'webgpu')).toBe(true);
+    expect(fitsTogether([text, base], 'webgpu')).toBe(true);
+    expect(fitsTogether([text, m3], 'webgpu')).toBe(true);
   });
 
-  it('estimates from the precision that will actually run', () => {
-    expect(weightPeakMB(text, 'webgpu')).toBeGreaterThan(weightPeakMB(text, 'wasm'));
+  it('estimates WebGPU from the buffers it actually allocates', () => {
+    // fp16 weights are larger than int8, but they are uploaded once, not tripled.
+    expect(sessionPeakMB(text, 'webgpu')).toBeGreaterThan(sizeFor(text, 'webgpu'));
+    expect(sessionPeakMB(text, 'webgpu')).toBeLessThan(sessionPeakMB(text, 'wasm'));
+  });
+
+  it('charges each pool its own overhead exactly once', () => {
+    expect(poolPeakMB([], 'wasm')).toBe(RUNTIME_BASE_MB);
+    expect(poolPeakMB([], 'gpu')).toBe(GPU_BASE_MB);
+
+    const residents = [row(text, 'wasm'), row(base, 'wasm')];
+    expect(poolPeakMB(residents, 'wasm')).toBeLessThanOrEqual(WASM_BUDGET_MB);
+    // A wasm session must not show up in the GPU figure.
+    expect(poolPeakMB(residents, 'gpu')).toBe(GPU_BASE_MB);
+    expect(usedPools(residents)).toEqual(['wasm']);
+  });
+
+  it('reads each resident backend instead of one global preference', () => {
+    // A wasm embedder joins a GPU decoder: different pools, no eviction.
+    expect(roomFor([row(text, 'webgpu')], base, 'wasm')).toBe(true);
+    // The same pair the other way round still has to fit the wasm pool.
+    expect(roomFor([row(text, 'wasm')], m3, 'wasm')).toBe(false);
+  });
+
+  it('lets a same-task load replace a session instead of counting both', () => {
+    expect(roomFor([row(m3, 'wasm')], m3, 'wasm')).toBe(true);
   });
 });
 
