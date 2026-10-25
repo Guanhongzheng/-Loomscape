@@ -12,6 +12,16 @@ import {
   type ModelSource,
 } from './engines';
 import { describeError } from './errors';
+import {
+  dropEntriesForRepo,
+  dropEntry,
+  entriesForRepo,
+  ensurePersistentStorage,
+  isFresh,
+  readEntries,
+  saveEntry,
+  type ModelCacheEntry,
+} from './model-cache';
 
 /**
  * The browser bundle is served from /runtime and imported natively. Bundling it
@@ -386,6 +396,9 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   const runtimeStore = useModelRuntime.getState();
   if (options.report) runtimeStore.set(model.id, { state: 'downloading', progress: 0, backend });
   markAttempt(model.id);
+  // Weights are worthless if the browser evicts them under pressure, which is
+  // exactly what would force the same download again next visit.
+  void ensurePersistentStorage();
 
   const totals = new Map<string, { loaded: number; total: number }>();
 
@@ -523,19 +536,71 @@ export async function scanModelCache(
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
-    for (const request of keys) {
-      for (const model of models) {
-        if (!request.url.includes(model.repo)) continue;
-        const row = result[model.id];
-        row.files += 1;
-        if (isWeightRequest(request.url, model.repo, 'q8')) row.q8 = true;
-        if (isWeightRequest(request.url, model.repo, 'fp16')) row.fp16 = true;
+    if (keys.length === 0) {
+      // A cleared browser must not be remembered as "downloaded".
+      await Promise.all(models.map((model) => dropEntry(model.id)));
+      return result;
+    }
 
-        const response = await cache.match(request);
-        const length = Number(response?.headers.get('content-length') ?? 0);
-        if (Number.isFinite(length) && length > 0) row.bytes += length;
+    const index = await readEntries();
+    const now = Date.now();
+    const writes: ModelCacheEntry[] = [];
+
+    for (const model of models) {
+      const requests = keys.filter((request) => request.url.includes(model.repo));
+      if (requests.length === 0) {
+        if (index[model.id]) await dropEntry(model.id);
+        continue;
+      }
+
+      const paths = Array.from(new Set(requests.map((request) => pathOf(request.url))));
+      const known = index[model.id]?.files;
+      // Same files as last time: reuse the measured sizes and skip the
+      // per-file `cache.match()`, which is the expensive half of this scan.
+      const unchanged =
+        Boolean(known) &&
+        paths.length === Object.keys(known as Record<string, number>).length &&
+        paths.every((path) => path in (known as Record<string, number>));
+
+      const sizes: Record<string, number> = unchanged ? { ...(known as Record<string, number>) } : {};
+      if (!unchanged) {
+        for (const request of requests) {
+          const path = pathOf(request.url);
+          if (path in sizes) continue;
+          const response = await cache.match(request);
+          const length = Number(response?.headers.get('content-length') ?? 0);
+          sizes[path] = Number.isFinite(length) && length > 0 ? length : 0;
+        }
+      }
+
+      const row = result[model.id];
+      row.files = requests.length;
+      row.bytes = Object.values(sizes).reduce((sum, size) => sum + size, 0);
+      row.q8 = requests.some((request) => isWeightRequest(request.url, model.repo, 'q8'));
+      row.fp16 = requests.some((request) => isWeightRequest(request.url, model.repo, 'fp16'));
+
+      const previous = index[model.id];
+      const stale =
+        !previous ||
+        !unchanged ||
+        previous.bytes !== row.bytes ||
+        previous.q8 !== row.q8 ||
+        previous.fp16 !== row.fp16 ||
+        !isFresh(previous, now);
+      if (stale) {
+        writes.push({
+          id: model.id,
+          repo: model.repo,
+          files: sizes,
+          bytes: row.bytes,
+          q8: row.q8,
+          fp16: row.fp16,
+          verifiedAt: now,
+        });
       }
     }
+
+    await Promise.all(writes.map((entry) => saveEntry(entry)));
   } catch {
     // a blocked cache is the same as an empty one for the caller
   }
@@ -543,20 +608,21 @@ export async function scanModelCache(
   return result;
 }
 
-/** Any file for this repo, including weights from a different quantisation. */
-export async function hasRepoCache(repo: string): Promise<boolean> {
-  if (typeof caches === 'undefined') return false;
+/** Cache keys are full URLs; the path is what stays stable across hosts. */
+function pathOf(url: string): string {
   try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-    return keys.some((request) => request.url.includes(repo));
+    return new URL(url).pathname;
   } catch {
-    return false;
+    return url;
   }
 }
 
 export async function hasWeights(repo: string): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
+  // One lookup answers the common case; the fallback scan is only for a cold
+  // or expired index, which `scanModelCache` refreshes on the settings page.
+  const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
+  if (indexed) return indexed.q8 || indexed.fp16;
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
@@ -571,6 +637,10 @@ export async function hasWeights(repo: string): Promise<boolean> {
 
 export async function isModelCached(repo: string, dtype: ModelDtype | 'q4' = 'q8'): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
+  if (dtype !== 'q4') {
+    const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
+    if (indexed) return dtype === 'fp16' ? indexed.fp16 : indexed.q8;
+  }
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
@@ -588,18 +658,8 @@ export async function removeModel(repo: string): Promise<number> {
   const keys = await cache.keys();
   const hits = keys.filter((request) => request.url.includes(repo));
   await Promise.all(hits.map((request) => cache.delete(request)));
+  await dropEntriesForRepo(repo);
   return hits.length;
-}
-
-export async function cachedModels(): Promise<string[]> {
-  if (typeof caches === 'undefined') return [];
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-    return Array.from(new Set(keys.map((request) => request.url)));
-  } catch {
-    return [];
-  }
 }
 
 export async function embedTexts(

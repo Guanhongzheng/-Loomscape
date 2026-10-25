@@ -38,6 +38,7 @@ import {
   type CacheStats,
 } from '@/lib/local-runtime';
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
+import { persistentStorageGranted } from '@/lib/model-cache';
 import { useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
@@ -70,6 +71,7 @@ export function EnginePanel() {
   const [released, setReleased] = useState(false);
   const [embedder, setEmbedder] = useState<EmbedderInfo | null>(null);
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
+  const [persisted, setPersisted] = useState(false);
 
   const refresh = useCallback(async () => {
     // Retired repos are scanned too, otherwise their weights sit in the cache
@@ -77,6 +79,7 @@ export function EnginePanel() {
     setCache(await scanModelCache([...ALL_LOCAL_MODELS, ...RETIRED_MODELS]));
     setUsage(await storageUsage());
     setEmbedder(await activeEmbedder());
+    setPersisted(await persistentStorageGranted());
   }, []);
 
   useEffect(() => {
@@ -611,7 +614,9 @@ export function EnginePanel() {
         <p className="text-[10.5px] leading-relaxed text-muted/60">
           权重存在本机浏览器缓存，不会上传。卸载只释放内存，刷新页面才真正归还。
           {usage
-            ? ` 存储已用 ${formatBytes(usage.used)} / ${formatBytes(usage.quota)}（${usedPercent}%）。`
+            ? ` 存储已用 ${formatBytes(usage.used)} / ${formatBytes(usage.quota)}（${usedPercent}%）${
+                persisted ? '，已获持久存储' : ''
+              }。`
             : ''}
           {facts
             ? ` 当前环境 ${facts.cores} 核${facts.deviceMemory ? ` · ${facts.deviceMemory} GB 内存` : ''} · WASM 最多 ${facts.threads} 线程${facts.isolated ? '' : '（未开启跨源隔离，只能单线程）'}。`
