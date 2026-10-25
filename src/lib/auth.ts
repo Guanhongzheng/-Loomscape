@@ -37,7 +37,13 @@ export type Profile = {
   id: string;
   uid: string;
   handle: string;
-  email: string;
+  /**
+   * Absent for guests on purpose. The users store has a unique index on
+   * `email`, so an empty string made the second guest impossible to write:
+   * IndexedDB rejected it with a ConstraintError and the dialog could only say
+   * "无法创建访客会话".
+   */
+  email?: string;
   createdAt: number;
   guest?: boolean;
 };
@@ -197,7 +203,8 @@ export const useAuth = create<AuthState>((set, getState) => ({
         id: opaqueId('guest'),
         uid: publicUid(),
         handle: '访客',
-        email: '',
+        // No email: a record without the indexed key is simply not indexed,
+        // which is what keeps guests out of the unique constraint.
         createdAt: Date.now(),
         guest: true,
         salt: '',

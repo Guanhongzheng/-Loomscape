@@ -320,6 +320,32 @@ async function run() {
   check('来源列表可见', chat.sources);
   check('未配置模型时标注 retrieval only', chat.mode);
   await rag.screenshot({ path: path.join(shots, '03-chat.png'), fullPage: false });
+
+  // Re-creating a guest must work. The users store has a unique index on
+  // `email`; guests used to be written with email: '', so the second guest hit
+  // a ConstraintError and the UI could only say 无法创建访客会话.
+  const uidOf = () =>
+    rag.evaluate(() => {
+      const text = document.querySelector('header')?.innerText ?? '';
+      return text.trim().split('\n').pop()?.trim() ?? '';
+    });
+  const beforeGuest = await uidOf();
+  await rag.locator('button[aria-label="退出登录"]').click();
+  await rag.waitForTimeout(500);
+  await rag.locator('[data-auth-gate]').getByRole('button', { name: /以访客身份继续/ }).click();
+  await rag.waitForTimeout(1200);
+
+  const guestState = await rag.evaluate(() => ({
+    gate: document.querySelectorAll('[data-auth-gate]').length,
+    refused: document.body.innerText.includes('无法创建访客会话'),
+  }));
+  const afterGuest = await uidOf();
+  check(
+    '退出后能再次以访客身份进入',
+    guestState.gate === 0 && !guestState.refused && afterGuest !== beforeGuest,
+    `gate=${guestState.gate} refused=${guestState.refused} uid=${afterGuest}`,
+  );
+
   await ragContext.close();
 
   // Mobile pass.

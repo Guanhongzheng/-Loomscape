@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/controls';
 import { useAuth } from '@/lib/auth';
 import { toast } from '@/components/ui/toast';
+import { describeError } from '@/lib/errors';
 
 type Mode = 'login' | 'register';
 
@@ -48,7 +49,8 @@ export function AuthDialog({
       onSuccess?.();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作未完成');
+      // A ConstraintError arrives as a DOMException, which is not an Error.
+      setError(describeError(err));
     }
   };
 
@@ -58,8 +60,8 @@ export function AuthDialog({
       toast('已以访客身份进入', 'success');
       onSuccess?.();
       onClose();
-    } catch {
-      setError('无法创建访客会话');
+    } catch (err) {
+      setError(`无法创建访客会话：${describeError(err)}`);
     }
   };
 
