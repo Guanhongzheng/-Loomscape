@@ -530,10 +530,10 @@ export async function streamLocal(options: {
     do_sample: true,
     temperature: options.temperature ?? 0.7,
     top_p: 0.9,
-    // 1.05 is not enough for a 0.5B model: it settles into a phrase and
-    // repeats it. The n-gram guard catches whole clauses the penalty misses.
-    repetition_penalty: 1.18,
-    no_repeat_ngram_size: 6,
+    // 1.05 let a 0.5B model settle on a phrase and loop; 1.18 over-corrected
+    // and pushed it away from tokens it had just read (digits included), so the
+    // penalty sits in the middle and the n-gram guard is gone.
+    repetition_penalty: 1.1,
     streamer,
   });
 

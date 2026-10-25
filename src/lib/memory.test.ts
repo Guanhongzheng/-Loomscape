@@ -43,6 +43,18 @@ describe('retrieve scope', () => {
     expect(unscoped.some((hit) => hit.record.kind === 'note')).toBe(true);
   });
 
+  it('drops a weak match instead of feeding it to the model', async () => {
+    // Measured 0.144 before the floor moved: a short arithmetic question
+    // "matched" a camera-settings note, and the answer came from that note.
+    await remember({
+      owner: 'usr_1',
+      kind: 'doc',
+      text: '拍摄参数：ISO 400，快门 1/60，光圈 f/2.8，白平衡 4200K。',
+    });
+    const hits = await retrieve('10-3是多少', 'usr_1', { topK: 4, kinds: ['doc'] });
+    expect(hits).toEqual([]);
+  });
+
   it('keeps owners apart', async () => {
     await remember({ owner: 'usr_1', kind: 'doc', text: '夜里的旧书店十点开门。' });
     const hits = await retrieve('旧书店开门时间', 'usr_2', { topK: 4 });

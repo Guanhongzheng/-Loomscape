@@ -114,6 +114,16 @@ describe('systemPrompt', () => {
     expect(prompt).not.toContain('片段');
   });
 
+  it('has a compact variant for on-device models', () => {
+    const prompt = systemPrompt('', true);
+    expect(prompt.length).toBeLessThan(60);
+    expect(prompt).not.toContain('创作助理');
+
+    const withContext = systemPrompt('[1] 《笔记》：夜里十点开门', true);
+    expect(withContext).toContain('参考资料');
+    expect(withContext).toContain('夜里十点开门');
+  });
+
   it('appends the retrieved context when there is some', () => {
     const prompt = systemPrompt('[1] 《笔记》：夜里十点开门');
     expect(prompt).toContain('片段');

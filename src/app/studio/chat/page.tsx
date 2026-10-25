@@ -39,9 +39,10 @@ import {
   type RecallHit,
 } from '@/lib/memory';
 import { composeRagContext, systemPrompt as buildSystem, usedCitations } from '@/lib/rag';
+import { solveArithmetic } from '@/lib/arithmetic';
 import { cn } from '@/lib/cn';
 
-type ChatMode = 'cloud' | 'local' | 'retrieval';
+type ChatMode = 'cloud' | 'local' | 'retrieval' | 'calc';
 
 type Turn = {
   id: string;
@@ -249,6 +250,30 @@ export default function ChatWorkbench() {
     if (!text || busy || sending.current) return;
     sending.current = true;
 
+    // Deterministic input should not be sampled: a 0.5B reads "10-3" as 10.3
+    // often enough that arithmetic is answered here and everywhere else still
+    // goes to the model.
+    if (localMode) {
+      const calc = solveArithmetic(text);
+      if (calc) {
+        const id = `calc_${Date.now()}`;
+        setLocalTurns((rows) => [
+          ...rows,
+          { id, role: 'user', text, at: Date.now() },
+          {
+            id: `${id}_a`,
+            role: 'assistant',
+            text: `${calc.expression} = ${calc.result}`,
+            at: Date.now(),
+            mode: 'calc',
+          },
+        ]);
+        setInput('');
+        sending.current = false;
+        return;
+      }
+    }
+
     const hits = ragOn
       ? await retrieve(text, owner, {
           topK: 4,
@@ -277,7 +302,7 @@ export default function ChatWorkbench() {
       setLocalBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
-      const system = buildSystem(context);
+      const system = buildSystem(context, true);
       // The local path used to send only the newest message, so a follow-up
       // question arrived with no conversation behind it.
       const history = localTurns
@@ -293,8 +318,8 @@ export default function ChatWorkbench() {
           backendPreference: prefs.backend,
           system,
           turns: [...history, { role: 'user', content: text }],
-          maxTokens: 360,
-          temperature: 0.6,
+          maxTokens: 240,
+          temperature: 0.3,
           signal: controller.signal,
           onToken: (chunk) => {
             produced += chunk;
@@ -496,9 +521,11 @@ export default function ChatWorkbench() {
                           <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/50">
                             {turn.mode === 'retrieval'
                               ? 'retrieval only'
-                              : turn.mode === 'local'
-                                ? 'local runtime'
-                                : 'ai sdk stream'}
+                              : turn.mode === 'calc'
+                                ? 'calculator'
+                                : turn.mode === 'local'
+                                  ? 'local runtime'
+                                  : 'ai sdk stream'}
                           </span>
                           {turn.text ? (
                             <button
@@ -581,6 +608,11 @@ export default function ChatWorkbench() {
                 检索 {ragOn ? (embedder?.label ?? '哈希') : '已关闭'}
               </span>
             </div>
+            {localMode ? (
+              <p className="mt-1.5 text-[10.5px] leading-relaxed text-muted/60">
+                端侧 0.5B：改写和短句可用；纯算式会交给本地计算器，其余事实与多步推理建议换云端。
+              </p>
+            ) : null}
           </div>
         </Panel>
 

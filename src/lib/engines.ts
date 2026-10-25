@@ -75,7 +75,7 @@ export const LOCAL_TEXT: LocalModel[] = [
     repo: 'onnx-community/Qwen2.5-0.5B-Instruct',
     task: 'text',
     label: 'Qwen2.5 0.5B',
-    note: '端侧起草，WASM 约 490MB；WebGPU 换 fp16 约 950MB',
+    note: '端侧起草：改写与短句可靠，算术与事实问答不可靠；WASM 约 490MB',
     dtype: 'q8',
     sizesMB: { q8: 488, fp16: 951 },
     languages: '中英',

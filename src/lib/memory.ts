@@ -232,7 +232,10 @@ export async function retrieve(
   if (!enabled || !query.trim()) return [];
 
   const topK = options.topK ?? 4;
-  const minScore = options.minScore ?? 0.12;
+  // 0.12 let junk through: a short question like "10-3是多少" scored 0.144
+  // against a camera-settings note, and a 0.5B model then answered from that
+  // note instead of from arithmetic. Genuine matches measure 0.4 and up.
+  const minScore = options.minScore ?? 0.2;
 
   let rows: MemoryRecord[] = [];
   try {

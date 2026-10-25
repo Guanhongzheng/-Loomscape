@@ -171,7 +171,13 @@ export const RAG_SYSTEM_PROMPT =
   '确实引用了某条片段时，在句末标注它的编号，例如 [2]；没有引用就不要标注。' +
   '语气克制，不复述问题，不写开场白，不要重复已经说过的话。';
 
+/** Used with on-device models, where a long persona eats the whole budget. */
+export const COMPACT_PROMPT = '你是助理。用中文直接回答，能一句说清就一句；不确定就说不确定。';
+
 /** Picks the system prompt that matches whether retrieval produced anything. */
-export function systemPrompt(context: string): string {
+export function systemPrompt(context: string, compact = false): string {
+  if (compact) {
+    return context.trim() ? `${COMPACT_PROMPT}\n\n参考资料：\n${context}` : COMPACT_PROMPT;
+  }
   return context.trim() ? `${RAG_SYSTEM_PROMPT}\n\n${context}` : ASSISTANT_PROMPT;
 }
