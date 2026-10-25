@@ -27,9 +27,16 @@ export function AuthDialog({
   const [error, setError] = useState('');
   const { login, register, enterAsGuest, busy } = useAuth();
 
+  // The component stays mounted after it closes, so without this a later visit
+  // reopened on the previous tab with the previous input — after signing out
+  // the form was still in 注册 mode and submitted a duplicate registration.
   useEffect(() => {
-    if (open) setError('');
-  }, [open, mode]);
+    if (!open) return;
+    setMode('login');
+    setPassword('');
+    setHandle('');
+    setError('');
+  }, [open]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

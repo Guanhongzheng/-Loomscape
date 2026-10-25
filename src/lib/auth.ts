@@ -5,7 +5,33 @@ import { STORES, get, put, all } from './db';
 import { opaqueId, publicUid } from './id';
 
 const SESSION_KEY = 'loomscape:session';
+/** Set when the visitor signs out on purpose, so a reload cannot re-guest them. */
+const SIGNED_OUT_KEY = 'loomscape:signed-out';
 const ITERATIONS = 120_000;
+
+export function wasSignedOut(): boolean {
+  try {
+    return localStorage.getItem(SIGNED_OUT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function clearSignedOut(): void {
+  try {
+    localStorage.removeItem(SIGNED_OUT_KEY);
+  } catch {
+    // private mode without storage still works in memory
+  }
+}
+
+function markSignedOut(): void {
+  try {
+    localStorage.setItem(SIGNED_OUT_KEY, '1');
+  } catch {
+    // ignore, the in-memory state is already signed out
+  }
+}
 
 export type Profile = {
   id: string;
@@ -102,6 +128,7 @@ export const useAuth = create<AuthState>((set, getState) => ({
     try {
       const user = await get<StoredUser>(STORES.users, userId);
       if (user) {
+        clearSignedOut();
         const { salt: _salt, hash: _hash, ...profile } = user;
         set({ user: profile, ready: true });
         return;
@@ -135,6 +162,7 @@ export const useAuth = create<AuthState>((set, getState) => ({
       };
       await put(STORES.users, profile);
       writeSession(profile.id);
+      clearSignedOut();
       const { salt: _salt, hash: _hash, ...rest } = profile;
       set({ user: rest, busy: false });
     } catch (error) {
@@ -153,6 +181,7 @@ export const useAuth = create<AuthState>((set, getState) => ({
       const hash = await derive(password, fromBase64(record.salt));
       if (!equal(hash, record.hash)) throw new Error('邮箱或密码不正确');
       writeSession(record.id);
+      clearSignedOut();
       const { salt: _salt, hash: _hash, ...profile } = record;
       set({ user: profile, busy: false });
     } catch (error) {
@@ -163,24 +192,36 @@ export const useAuth = create<AuthState>((set, getState) => ({
 
   enterAsGuest: async () => {
     set({ busy: true });
-    const profile: StoredUser = {
-      id: opaqueId('guest'),
-      uid: publicUid(),
-      handle: '访客',
-      email: '',
-      createdAt: Date.now(),
-      guest: true,
-      salt: '',
-      hash: '',
-    };
-    await put(STORES.users, profile);
-    writeSession(profile.id);
-    const { salt: _salt, hash: _hash, ...rest } = profile;
-    set({ user: rest, busy: false });
+    try {
+      const profile: StoredUser = {
+        id: opaqueId('guest'),
+        uid: publicUid(),
+        handle: '访客',
+        email: '',
+        createdAt: Date.now(),
+        guest: true,
+        salt: '',
+        hash: '',
+      };
+      await put(STORES.users, profile);
+      writeSession(profile.id);
+      clearSignedOut();
+      const { salt: _salt, hash: _hash, ...rest } = profile;
+      set({ user: rest, busy: false });
+    } catch (error) {
+      // Without this the dialog stayed disabled after a blocked write.
+      set({ busy: false });
+      throw error;
+    }
   },
 
   logout: () => {
-    localStorage.removeItem(SESSION_KEY);
-    set({ user: null });
+    try {
+      localStorage.removeItem(SESSION_KEY);
+      markSignedOut();
+    } catch {
+      // storage may be blocked; the in-memory state below is still correct
+    }
+    set({ user: null, ready: true });
   },
 }));

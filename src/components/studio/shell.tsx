@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Loader2, LogOut } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { ArrowLeft, Loader2, LogIn, LogOut } from 'lucide-react';
+import { useAuth, wasSignedOut } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
 import { ALL_LOCAL_MODELS, findModel, useEngines, useModelRuntime } from '@/lib/engines';
 import { describeError } from '@/lib/errors';
@@ -14,6 +14,9 @@ import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
 import { DOCK } from '@/lib/workbenches';
+import { unreadTotal, useUnread } from '@/lib/unread';
+import { AuthDialog } from '@/components/intro/auth-dialog';
+import { Button } from '@/components/ui/button';
 
 /** Failures that come from hitting a browser limit rather than from our code. */
 const RUNTIME_LIMIT = /Response|ArrayBuffer|supported range|out of memory|RangeError|WebAssembly/i;
@@ -41,6 +44,13 @@ export function StudioShell({
   const loaded = useEndpoints((state) => state.loaded);
   const health = useEndpoints((state) => state.health);
   const bootstrapped = useRef(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const unread = useUnread((state) => unreadTotal(state));
+  const loadUnread = useUnread((state) => state.load);
+
+  useEffect(() => {
+    loadUnread();
+  }, [loadUnread]);
 
   useEffect(() => {
     void hydrate();
@@ -50,10 +60,17 @@ export function StudioShell({
     void load();
   }, [load]);
 
+  /**
+   * A first visit gets a guest identity so the workbenches are usable without a
+   * form. After an explicit sign-out that must not happen: silently creating a
+   * new guest is why logging in again looked broken — the app never stayed in
+   * the signed-out state the login form needs.
+   */
   useEffect(() => {
     if (!ready || user || bootstrapped.current) return;
+    if (wasSignedOut()) return;
     bootstrapped.current = true;
-    void enterAsGuest();
+    void enterAsGuest().catch((error) => toast(describeError(error), 'error'));
   }, [ready, user, enterAsGuest]);
 
   const prefs = useEngines((state) => state.prefs);
@@ -133,6 +150,15 @@ export function StudioShell({
     return () => window.removeEventListener('unhandledrejection', onRejection);
   }, []);
 
+  const continueAsGuest = async () => {
+    try {
+      await enterAsGuest();
+    } catch (error) {
+      toast(describeError(error), 'error');
+    }
+  };
+
+  const gated = ready && !user;
   const online = health.text || health.image || health.speech;
   const progress = active ? Math.round((models[active.id]?.progress ?? 0) * 100) : 0;
   const current = DOCK.find((item) =>
@@ -198,6 +224,17 @@ export function StudioShell({
         <span className="hidden h-4 w-px bg-[rgb(var(--line))] sm:block" />
 
         <div className="flex items-center gap-2">
+          {user?.guest ? (
+            <button
+              type="button"
+              onClick={() => setAuthOpen(true)}
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11.5px] text-muted transition-colors hover:text-ink"
+            >
+              <LogIn size={12.5} strokeWidth={1.8} />
+              <span className="hidden sm:inline">登录 / 注册</span>
+            </button>
+          ) : null}
+
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[rgb(var(--sunken))] font-mono text-[11px] text-ink/70 shadow-[var(--shadow-inset-sm)]">
             {user ? user.handle.slice(0, 1).toUpperCase() : '·'}
           </span>
@@ -207,14 +244,19 @@ export function StudioShell({
               {user?.uid ?? '—'}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={logout}
-            aria-label="退出登录"
-            className="grid h-7 w-7 place-items-center rounded-lg text-muted/70 transition-colors hover:bg-[rgb(var(--sunken))] hover:text-ink"
-          >
-            <LogOut size={13.5} strokeWidth={1.7} />
-          </button>
+          {user ? (
+            <button
+              type="button"
+              onClick={() => {
+                useUnread.getState().reset();
+                logout();
+              }}
+              aria-label="退出登录"
+              className="grid h-7 w-7 place-items-center rounded-lg text-muted/70 transition-colors hover:bg-[rgb(var(--sunken))] hover:text-ink"
+            >
+              <LogOut size={13.5} strokeWidth={1.7} />
+            </button>
+          ) : null}
         </div>
 
         {active ? (
@@ -240,7 +282,31 @@ export function StudioShell({
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       >
-        <div className="mx-auto w-full max-w-[1720px] px-4 py-6 md:px-8 md:py-8">{children}</div>
+        {gated ? (
+          <div className="mx-auto flex min-h-[58vh] w-full max-w-[480px] flex-col justify-center px-4">
+            <div
+              data-auth-gate=""
+              className="rounded-2xl bg-[rgb(var(--surface))] p-7 shadow-[var(--shadow-neu)]"
+            >
+              <h2 className="font-serif text-[21px] text-ink">先建立一个身份</h2>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-muted">
+                账户、密钥与作品都保存在这台设备的浏览器里，不经过服务器。登录后回到原来的作品；
+                访客身份也能用，但数据按访客单独存放。
+              </p>
+              <div className="mt-6 flex flex-wrap gap-2">
+                <Button variant="primary" size="md" onClick={() => setAuthOpen(true)}>
+                  <LogIn size={14} />
+                  登录 / 注册
+                </Button>
+                <Button variant="ghost" size="md" onClick={() => void continueAsGuest()}>
+                  以访客身份继续
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mx-auto w-full max-w-[1720px] px-4 py-6 md:px-8 md:py-8">{children}</div>
+        )}
       </motion.main>
 
       <footer className="shrink-0 border-t border-[rgb(var(--line))]/55 bg-[rgb(var(--paper))]/95 px-3 pb-[max(0.625rem,env(safe-area-inset-bottom))] pt-2.5 md:px-6">
@@ -267,11 +333,21 @@ export function StudioShell({
                     : 'text-muted hover:bg-[rgb(var(--surface))]/55 hover:text-ink',
                 )}
               >
-                <Icon
-                  size={16}
-                  strokeWidth={1.7}
-                  className={cn(active ? 'text-[rgb(var(--accent))]' : 'text-muted/75')}
-                />
+                <span className="relative">
+                  <Icon
+                    size={16}
+                    strokeWidth={1.7}
+                    className={cn(active ? 'text-[rgb(var(--accent))]' : 'text-muted/75')}
+                  />
+                  {item.href === '/studio/social' && unread > 0 ? (
+                    <span
+                      aria-label={`${unread} 条未读`}
+                      className="absolute -right-2 -top-1.5 grid h-[15px] min-w-[15px] place-items-center rounded-full bg-[#b4453a] px-1 font-mono text-[8.5px] leading-none text-white"
+                    >
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  ) : null}
+                </span>
                 <span className="text-[10.5px] leading-none tracking-wide">{item.title}</span>
                 {active ? (
                   <motion.span
@@ -285,6 +361,8 @@ export function StudioShell({
           })}
         </nav>
       </footer>
+
+      <AuthDialog open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

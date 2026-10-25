@@ -276,7 +276,7 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-5 md:pb-6">
           <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-[rgb(var(--paper))]/85 p-2 pl-3 shadow-[0_18px_44px_-18px_rgba(30,42,60,0.4),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-md md:gap-3">
-            {user ? (
+            {user && !user.guest ? (
               <div className="flex items-center gap-2.5 pr-1">
                 <span className="grid h-7 w-7 place-items-center rounded-full bg-[rgb(var(--sunken))] font-mono text-[10px] text-ink/70 shadow-[var(--shadow-inset-sm)]">
                   {user.handle.slice(0, 1).toUpperCase()}
