@@ -89,8 +89,9 @@ export function StudioShell({
 
   /**
    * Entering the workspace brings back whichever local engine the settings
-   * point at, but only if its weights are already on disk: starting a 490MB
-   * download because someone scrolled past the intro would be rude.
+   * point at, but only if its weights are already on disk: starting a
+   * several-hundred-megabyte download because someone scrolled past the intro
+   * would be rude.
    */
   useEffect(() => {
     if (!prefsLoaded || resident || autoLoaded.current) return;

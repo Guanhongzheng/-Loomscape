@@ -32,5 +32,7 @@ export function describeError(error: unknown): string {
 
 /** Errors that usually mean the tab is out of memory rather than out of luck. */
 export function looksLikeMemoryPressure(message: string): boolean {
-  return /out of memory|allocation|array buffer|memory access|rangeerror|aborted|oom/i.test(message);
+  return /out of memory|allocation|array buffer|memory access|rangeerror|aborted|oom|内存/i.test(
+    message,
+  );
 }

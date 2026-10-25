@@ -18,6 +18,7 @@ import { Segmented } from '@/components/ui/controls';
 import { toast } from '@/components/ui/toast';
 import {
   ALL_LOCAL_MODELS,
+  RETIRED_MODELS,
   formatBytes,
   sizeFor,
   useEngines,
@@ -29,6 +30,7 @@ import {
   backendLabel,
   dtypeFor,
   loadModel,
+  recoverInterruptedLoad,
   removeModel,
   runtimeInfo,
   scanModelCache,
@@ -68,13 +70,18 @@ export function EnginePanel() {
   const [facts, setFacts] = useState<RuntimeFacts | null>(null);
 
   const refresh = useCallback(async () => {
-    setCache(await scanModelCache(ALL_LOCAL_MODELS));
+    // Retired repos are scanned too, otherwise their weights sit in the cache
+    // with no card left to delete them from.
+    setCache(await scanModelCache([...ALL_LOCAL_MODELS, ...RETIRED_MODELS]));
     setUsage(await storageUsage());
     setEmbedder(await activeEmbedder());
   }, []);
 
   useEffect(() => {
     void load();
+    // A load that killed the renderer leaves no state behind; the marker it
+    // wrote is the only record, and it belongs on the card as an error.
+    recoverInterruptedLoad();
   }, [load]);
 
   useEffect(() => {
@@ -139,11 +146,19 @@ export function EnginePanel() {
   const activate = async (model: LocalModel) => {
     const previous = ALL_LOCAL_MODELS.find((item) => item.id === resident?.modelId);
 
+    const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (model.minMemoryGB && memory && memory < model.minMemoryGB) {
+      toast(
+        `${model.label} 建议 ${model.minMemoryGB}GB 内存，本机只报告 ${memory}GB；可以先试，崩了就换小一档`,
+        'info',
+      );
+    }
+
     // Only the weights that are not on disk need room; a cached model just
     // needs to be parsed into memory.
-    if (!cache[model.id]?.[dtypeFor(model, backend)]) {
+    if (!cache[model.id]?.[dtypeOn(model)]) {
       const now = await storageUsage();
-      const need = sizeFor(model, backend) * 1024 * 1024;
+      const need = sizeFor(model, prefs.backend) * 1024 * 1024;
       if (!roomFor(now, need)) {
         const detail = now
           ? `已用 ${formatBytes(now.used)} / 配额 ${formatBytes(now.quota)}，还差约 ${formatBytes(
@@ -184,11 +199,13 @@ export function EnginePanel() {
       // Cache writes land slightly after the session resolves; a second scan
       // stops the card from flashing 旧权重 for files it just downloaded.
       window.setTimeout(() => void refresh(), 1200);
-      const info = runtimeInfo();
-      const backend = useModelRuntime.getState().resident?.backend;
+      // The resident record knows the thread count the session was opened
+      // with; `runtimeInfo()` would report the embedding budget for a
+      // decoder, which is capped lower.
+      const session = useModelRuntime.getState().resident;
       const replaced = previous && previous.id !== model.id ? `，已卸载 ${previous.label}` : '';
       toast(
-        `已加载 ${model.label} · ${backendLabel(backend)} ${info.threads} 线程${replaced}`,
+        `已加载 ${model.label} · ${backendLabel(session?.backend)} ${session?.threads ?? '?'} 线程${replaced}`,
         'success',
       );
     } catch (error) {
@@ -256,6 +273,14 @@ export function EnginePanel() {
   const loadingModel = ALL_LOCAL_MODELS.find((item) => models[item.id]?.state === 'downloading');
   const usedPercent = usage && usage.quota > 0 ? Math.round(usage.ratio * 100) : 0;
   const loadingState = loadingModel ? models[loadingModel.id] : undefined;
+  const retired = RETIRED_MODELS.filter((row) => (cache[row.id]?.files ?? 0) > 0);
+  const retiredBytes = retired.reduce((sum, row) => sum + (cache[row.id]?.bytes ?? 0), 0);
+
+  const dropRetired = async () => {
+    for (const row of retired) await removeModel(row.repo);
+    await refresh();
+    toast('已清理旧版模型权重', 'info');
+  };
 
   return (
     <div className="space-y-5">
@@ -483,7 +508,7 @@ export function EnginePanel() {
           ) : null}
           <span className="w-full text-[10.5px] leading-relaxed text-muted/65">
             同一时间只驻留一个模型，加载另一个会先卸载当前的。当前环境：{facts?.cores ?? '—'} 核
-            {facts?.deviceMemory ? ` · ${facts.deviceMemory} GB 内存` : ''} · WASM{' '}
+            {facts?.deviceMemory ? ` · ${facts.deviceMemory} GB 内存` : ''} · WASM 最多{' '}
             {facts?.threads ?? 1} 线程
             {facts && !facts.isolated ? '（未开启跨源隔离，只能单线程）' : ''}。
             {usage ? (
@@ -649,6 +674,19 @@ export function EnginePanel() {
             );
           })}
         </div>
+
+        {retired.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-3 shadow-[var(--shadow-inset-sm)]">
+            <span className="text-[11.5px] text-muted">旧版模型权重</span>
+            <span className="font-mono text-[10px] text-muted/65">
+              {retired.map((row) => row.label).join(' / ')} · {formatBytes(retiredBytes)}
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => void dropRetired()} className="ml-auto">
+              <Trash2 size={11} />
+              清理
+            </Button>
+          </div>
+        ) : null}
 
         <p className="mt-3 text-[10.5px] leading-relaxed text-muted/65">
           权重保存在本机浏览器缓存，不会上传。加载即选用，不需另设当前模型；加载另一个会先释放内存中的这一个。

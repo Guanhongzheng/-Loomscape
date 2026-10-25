@@ -22,6 +22,10 @@ export type LocalModel = {
   sizesMB: Record<ModelDtype, number>;
   dims?: number;
   languages: string;
+  /** ChatML prefill that closes a hybrid-reasoning model's think block. */
+  prefill?: string;
+  /** Rough free-memory floor, only used to warn before a large download. */
+  minMemoryGB?: number;
 };
 
 /**
@@ -39,22 +43,22 @@ export const LOCAL_EMBEDDINGS: LocalModel[] = [
     repo: 'Xenova/bge-small-zh-v1.5',
     task: 'embedding',
     label: 'BGE Small 中文',
-    note: '中文短文本检索，体积最小，冷启动最快',
+    note: '最小的一档：中文短句够用，23MB，切换后秒级就绪',
     dtype: 'q8',
     sizesMB: { q8: 23, fp16: 45 },
     dims: 512,
     languages: '中文',
   },
   {
-    id: 'e5-small',
-    repo: 'Xenova/multilingual-e5-small',
+    id: 'bge-base-zh',
+    repo: 'Xenova/bge-base-zh-v1.5',
     task: 'embedding',
-    label: 'E5 Small 多语',
-    note: '中英混排稳定，适合跨语言作品库',
+    label: 'BGE Base 中文',
+    note: '中文检索明显好于 Small，768 维，仍是百兆级',
     dtype: 'q8',
-    sizesMB: { q8: 113, fp16: 224 },
-    dims: 384,
-    languages: '多语',
+    sizesMB: { q8: 98, fp16: 194 },
+    dims: 768,
+    languages: '中文',
   },
   {
     id: 'bge-m3',
@@ -71,14 +75,40 @@ export const LOCAL_EMBEDDINGS: LocalModel[] = [
 
 export const LOCAL_TEXT: LocalModel[] = [
   {
-    id: 'qwen2.5-0.5b',
-    repo: 'onnx-community/Qwen2.5-0.5B-Instruct',
+    id: 'qwen3-0.6b',
+    repo: 'onnx-community/Qwen3-0.6B-ONNX',
     task: 'text',
-    label: 'Qwen2.5 0.5B',
-    note: '端侧起草：改写与短句可靠，算术与事实问答不可靠；WASM 约 490MB',
+    label: 'Qwen3 0.6B',
+    note: '默认档：中文问答、摘要、短句可用；长句改写仍会跑偏，算术交给计算器',
     dtype: 'q8',
-    sizesMB: { q8: 488, fp16: 951 },
-    languages: '中英',
+    sizesMB: { q8: 589, fp16: 1147 },
+    languages: '中英等 100+',
+    // The model card's own template closes the think block this way for
+    // non-thinking use; without it the answer starts with a reasoning trace.
+    prefill: '<think>\n\n</think>\n\n',
+    minMemoryGB: 4,
+  },
+];
+
+/**
+ * Weights the catalog no longer offers. Removing the cards would otherwise
+ * leave their files in Cache Storage forever, with no way to reclaim them from
+ * the UI.
+ */
+export type RetiredModel = { id: string; label: string; repo: string; sizesMB: number };
+
+export const RETIRED_MODELS: RetiredModel[] = [
+  {
+    id: 'qwen2.5-0.5b',
+    label: 'Qwen2.5 0.5B',
+    repo: 'onnx-community/Qwen2.5-0.5B-Instruct',
+    sizesMB: 951,
+  },
+  {
+    id: 'e5-small',
+    label: 'E5 Small 多语',
+    repo: 'Xenova/multilingual-e5-small',
+    sizesMB: 224,
   },
 ];
 
@@ -99,12 +129,34 @@ export type EnginePrefs = {
 
 export const DEFAULT_ENGINE_PREFS: EnginePrefs = {
   textMode: 'api',
-  textModelId: 'qwen2.5-0.5b',
+  textModelId: 'qwen3-0.6b',
   embeddingMode: 'hash',
-  embeddingModelId: 'bge-small-zh',
+  embeddingModelId: 'bge-base-zh',
   source: 'modelscope',
   backend: 'auto',
 };
+
+/**
+ * A stored preference can name a model this build dropped. Resolving it at the
+ * call sites would mean every workbench needs a `?? fallback`; normalising once
+ * on load keeps them honest.
+ */
+export function normalisePrefs(stored?: Partial<EnginePrefs> | null): EnginePrefs {
+  const merged: EnginePrefs = { ...DEFAULT_ENGINE_PREFS, ...(stored ?? {}) };
+  const text = findModel(merged.textModelId);
+  if (text?.task !== 'text') merged.textModelId = DEFAULT_ENGINE_PREFS.textModelId;
+  const embedding = findModel(merged.embeddingModelId);
+  if (embedding?.task !== 'embedding') {
+    merged.embeddingModelId = DEFAULT_ENGINE_PREFS.embeddingModelId;
+  }
+  if (merged.textMode !== 'local' && merged.textMode !== 'api') merged.textMode = 'api';
+  if (!['hash', 'local', 'api'].includes(merged.embeddingMode)) merged.embeddingMode = 'hash';
+  if (!['auto', 'wasm', 'webgpu'].includes(merged.backend)) merged.backend = 'auto';
+  if (merged.source !== 'modelscope' && merged.source !== 'huggingface') {
+    merged.source = 'modelscope';
+  }
+  return merged;
+}
 
 type EngineState = {
   prefs: EnginePrefs;
@@ -119,7 +171,13 @@ export const useEngines = create<EngineState>((set, get) => ({
 
   load: async () => {
     const stored = await getPref<EnginePrefs>('engines', DEFAULT_ENGINE_PREFS);
-    set({ prefs: { ...DEFAULT_ENGINE_PREFS, ...stored }, loaded: true });
+    const prefs = normalisePrefs(stored);
+    set({ prefs, loaded: true });
+    // Write back only when normalising changed something, so a renamed or
+    // retired model does not keep reappearing after every reload.
+    if (JSON.stringify(prefs) !== JSON.stringify({ ...DEFAULT_ENGINE_PREFS, ...stored })) {
+      await setPref('engines', prefs);
+    }
   },
 
   patch: async (next) => {

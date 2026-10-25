@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  findModel,
   useModelRuntime,
   type Backend,
   type LocalModel,
@@ -136,6 +137,59 @@ type LoadOptions = {
 const pipelines = new Map<string, Promise<unknown>>();
 const backends = new Map<string, Backend>();
 
+const ATTEMPT_KEY = 'loomscape:model-load';
+
+/**
+ * A renderer that runs out of wasm memory dies inside the await: no catch
+ * block runs, the tab reloads, and the card falls back to 「未加载」 as if the
+ * click was never received. The marker is written before the pipeline starts
+ * and cleared when it settles, so the next mount can explain what happened
+ * instead of making the download look wasted.
+ */
+function markAttempt(modelId: string | null): void {
+  try {
+    if (modelId) {
+      localStorage.setItem(ATTEMPT_KEY, JSON.stringify({ modelId, at: Date.now() }));
+    } else {
+      localStorage.removeItem(ATTEMPT_KEY);
+    }
+  } catch {
+    // private mode or a full quota: the marker is a nicety, not a requirement
+  }
+}
+
+/** Turns a dangling marker into a visible error on that model's card. */
+export function recoverInterruptedLoad(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(ATTEMPT_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(ATTEMPT_KEY);
+  } catch {
+    return null;
+  }
+
+  let attempt: { modelId?: string; at?: number } | null = null;
+  try {
+    attempt = JSON.parse(raw) as { modelId?: string; at?: number };
+  } catch {
+    return null;
+  }
+
+  const model = attempt?.modelId ? findModel(attempt.modelId) : undefined;
+  // Stale markers are from a session the user already moved on from.
+  if (!model || !attempt?.at || Date.now() - attempt.at > 30 * 60 * 1000) return null;
+
+  useModelRuntime.getState().set(model.id, {
+    state: 'error',
+    progress: 0,
+    message: `上次加载 ${model.label} 没有完成：页面被关闭，或者浏览器内存不足中断了推理引擎。再点一次即可；如果反复中断，这台设备可能带不动这个模型。`,
+  });
+  return model.id;
+}
+
 type Resident = {
   modelId: string;
   repo: string;
@@ -242,6 +296,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
 
   const runtimeStore = useModelRuntime.getState();
   if (options.report) runtimeStore.set(model.id, { state: 'downloading', progress: 0, backend });
+  markAttempt(model.id);
 
   const totals = new Map<string, { loaded: number; total: number }>();
 
@@ -303,6 +358,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
 
   try {
     const pipe = await task;
+    markAttempt(null);
     // Anything previously marked ready is gone: only one model lives at a time.
     const store = useModelRuntime.getState();
     Object.entries(store.models).forEach(([id, state]) => {
@@ -325,6 +381,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     return { pipe, backend };
   } catch (error) {
     pipelines.delete(key);
+    markAttempt(null);
     if (options.report) {
       runtimeStore.set(model.id, {
         state: 'error',
@@ -380,7 +437,9 @@ export type CacheStats = {
  * from the stored `content-length`; responses without it are counted but not
  * measured, which is why `bytes` can be lower than the model card claims.
  */
-export async function scanModelCache(models: LocalModel[]): Promise<Record<string, CacheStats>> {
+export async function scanModelCache(
+  models: Array<{ id: string; repo: string }>,
+): Promise<Record<string, CacheStats>> {
   const result: Record<string, CacheStats> = {};
   for (const model of models) result[model.id] = { files: 0, bytes: 0, q8: false, fp16: false };
 
@@ -482,13 +541,106 @@ export async function embedTexts(
   return { vectors: rows as number[][], backend };
 }
 
-export function chatPrompt(system: string, turns: Array<{ role: string; content: string }>): string {
+export function chatPrompt(
+  system: string,
+  turns: Array<{ role: string; content: string }>,
+  prefill = '',
+): string {
   const blocks = [`<|im_start|>system\n${system}<|im_end|>`];
   for (const turn of turns) {
     blocks.push(`<|im_start|>${turn.role}\n${turn.content}<|im_end|>`);
   }
-  blocks.push('<|im_start|>assistant\n');
+  blocks.push(`<|im_start|>assistant\n${prefill}`);
   return blocks.join('\n');
+}
+
+/**
+ * Only the plain-text tag is listed. Qwen3's ` thinking` / `<｜end▁of▁thinking｜>` are
+ * special tokens, so the streamer already drops them with skip_special_tokens;
+ * matching the bare word "think" on top of that would swallow English answers
+ * that happen to open with it.
+ */
+const OPENERS = ['<think>'];
+const CLOSERS = ['</think>', '<｜end▁of▁thinking｜>'];
+
+/**
+ * Qwen3 is a hybrid-reasoning model: even with a closed think block in the
+ * prompt it can open another one. Reasoning is model-internal and should not
+ * reach the transcript, but the answer streams token by token, so the block
+ * has to be dropped while it arrives rather than filtered from the result.
+ */
+export function createReasoningFilter(emit: (text: string) => void) {
+  let held = '';
+  let state: 'start' | 'inside' | 'answer' = 'start';
+  const longestCloser = Math.max(...CLOSERS.map((closer) => closer.length));
+
+  const drain = () => {
+    for (;;) {
+      if (state === 'answer') {
+        if (held) {
+          emit(held);
+          held = '';
+        }
+        return;
+      }
+
+      if (state === 'start') {
+        const head = held.replace(/^\s+/, '');
+        if (!head) {
+          held = '';
+          return;
+        }
+        // Still short enough to become a tag: wait for more tokens.
+        if ([...OPENERS, ...CLOSERS].some((tag) => tag.startsWith(head))) return;
+        // A closer with no opener is the tail of the prompt's own closed block.
+        const stray = CLOSERS.find((tag) => head.startsWith(tag));
+        if (stray) {
+          state = 'answer';
+          held = head.slice(stray.length).replace(/^\s+/, '');
+          continue;
+        }
+        const opener = OPENERS.find((item) => head.startsWith(item));
+        if (!opener) {
+          state = 'answer';
+          continue;
+        }
+        state = 'inside';
+        held = head.slice(opener.length);
+        continue;
+      }
+
+      let cut = -1;
+      let closer = '';
+      for (const candidate of CLOSERS) {
+        const at = held.indexOf(candidate);
+        if (at !== -1 && (cut === -1 || at < cut)) {
+          cut = at;
+          closer = candidate;
+        }
+      }
+      if (cut === -1) {
+        // Hold back only a tail that could be the start of a closer, so a tag
+        // split across tokens never leaks into the answer.
+        if (held.length > longestCloser) held = held.slice(-longestCloser);
+        return;
+      }
+      held = held.slice(cut + closer.length).replace(/^\s+/, '');
+      state = 'answer';
+    }
+  };
+
+  return {
+    push(chunk: string) {
+      held += chunk;
+      drain();
+    },
+    /** Called once the stream ends; an unclosed block is reasoning, not answer. */
+    flush() {
+      if (state === 'answer' && held) emit(held);
+      else if (state === 'start' && held.trim()) emit(held.replace(/^\s+/, ''));
+      held = '';
+    },
+  };
 }
 
 export async function streamLocal(options: {
@@ -515,17 +667,21 @@ export async function streamLocal(options: {
     (prompt: string, options: Record<string, unknown>): Promise<unknown>;
   };
 
+  const filter = createReasoningFilter((text) => {
+    produced += text;
+    options.onToken(text);
+  });
+
   const streamer = new mod.TextStreamer(runner.tokenizer, {
     skip_prompt: true,
     skip_special_tokens: true,
     callback_function: (chunk: string) => {
       if (options.signal?.aborted) throw new Error('已停止');
-      produced += chunk;
-      options.onToken(chunk);
+      filter.push(chunk);
     },
   });
 
-  await runner(chatPrompt(options.system, options.turns), {
+  await runner(chatPrompt(options.system, options.turns, options.model.prefill), {
     max_new_tokens: options.maxTokens ?? 512,
     do_sample: true,
     temperature: options.temperature ?? 0.7,
@@ -536,6 +692,7 @@ export async function streamLocal(options: {
     repetition_penalty: 1.1,
     streamer,
   });
+  filter.flush();
 
   backends.set(options.model.id, backend);
   return produced;

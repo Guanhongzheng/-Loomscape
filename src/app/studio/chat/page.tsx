@@ -250,9 +250,9 @@ export default function ChatWorkbench() {
     if (!text || busy || sending.current) return;
     sending.current = true;
 
-    // Deterministic input should not be sampled: a 0.5B reads "10-3" as 10.3
-    // often enough that arithmetic is answered here and everywhere else still
-    // goes to the model.
+    // Deterministic input should not be sampled: on-device models read "10-3"
+    // as 10.3 often enough that arithmetic is answered here, while everything
+    // else still goes to the model.
     if (localMode) {
       const calc = solveArithmetic(text);
       if (calc) {
@@ -478,7 +478,11 @@ export default function ChatWorkbench() {
             ) : (
               <div className="space-y-6">
                 {turns.map((turn) => (
-                  <article key={turn.id} className={cn(turn.role === 'user' && 'pl-0 md:pl-8')}>
+                  <article
+                    key={turn.id}
+                    data-turn={turn.role}
+                    className={cn(turn.role === 'user' && 'pl-0 md:pl-8')}
+                  >
                     {turn.role === 'user' ? (
                       <div className="flex items-start gap-3">
                         <span className="mt-[3px] font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
@@ -610,7 +614,7 @@ export default function ChatWorkbench() {
             </div>
             {localMode ? (
               <p className="mt-1.5 text-[10.5px] leading-relaxed text-muted/60">
-                端侧 0.5B：改写和短句可用；纯算式会交给本地计算器，其余事实与多步推理建议换云端。
+                端侧模型：短问答与摘要可用，纯算式交给本地计算器；长文改写、多步推理建议换云端。
               </p>
             ) : null}
           </div>

@@ -1,13 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   chatPrompt,
+  createReasoningFilter,
   dtypeFor,
   isWeightRequest,
+  recoverInterruptedLoad,
   runtimeInfo,
   threadCount,
   weightFile,
 } from '@/lib/local-runtime';
-import { LOCAL_TEXT, sizeFor } from '@/lib/engines';
+import { LOCAL_TEXT, sizeFor, useModelRuntime } from '@/lib/engines';
 
 describe('threadCount', () => {
   it('leaves one core to the UI and caps at four', () => {
@@ -119,6 +121,11 @@ describe('chatPrompt', () => {
     expect(prompt.endsWith('<|im_start|>assistant\n')).toBe(true);
   });
 
+  it('appends a model prefill inside the assistant turn', () => {
+    const prompt = chatPrompt('你是编辑', [{ role: 'user', content: '一' }], '<think>\n\n</think>\n\n');
+    expect(prompt.endsWith('<|im_start|>assistant\n<think>\n\n</think>\n\n')).toBe(true);
+  });
+
   it('does not repeat the system block for each turn', () => {
     const prompt = chatPrompt('你是编辑', [
       { role: 'user', content: '一' },
@@ -126,5 +133,101 @@ describe('chatPrompt', () => {
       { role: 'user', content: '三' },
     ]);
     expect(prompt.match(/<\|im_start\|>system/g)).toHaveLength(1);
+  });
+});
+
+describe('reasoning filter', () => {
+  const run = (chunks: string[]) => {
+    let out = '';
+    const filter = createReasoningFilter((text) => {
+      out += text;
+    });
+    chunks.forEach((chunk) => filter.push(chunk));
+    filter.flush();
+    return out;
+  };
+
+  it('passes a plain answer through untouched', () => {
+    expect(run(['灯', '先亮', '了。'])).toBe('灯先亮了。');
+  });
+
+  it('drops a reasoning block that opens the answer', () => {
+    expect(run(['<think>先判断语气</think>', '灯先亮了。'])).toBe('灯先亮了。');
+  });
+
+  it('accepts the chat-template end token as the closer', () => {
+    expect(run(['<think>想一想<｜end▁of▁thinking｜>', '答案'])).toBe('答案');
+  });
+
+  it('does not eat an English answer that opens with "think"', () => {
+    expect(run(['thinking aloud is the brief'])).toBe('thinking aloud is the brief');
+  });
+
+  it('handles a tag split across tokens', () => {
+    expect(run(['<thi', 'nk>推理</thi', 'nk>', '答案'])).toBe('答案');
+  });
+
+  it('swallows an unclosed block instead of printing reasoning', () => {
+    expect(run(['<think>', '一直推理没有收尾'])).toBe('');
+  });
+
+  it('drops a stray closer left by the prompt prefill', () => {
+    expect(run(['\n\n</think>\n\n', '答案'])).toBe('答案');
+  });
+
+  it('keeps text that merely starts with an angle bracket', () => {
+    expect(run(['<3 这个方案'])).toBe('<3 这个方案');
+  });
+
+  it('does not strip a think tag in the middle of an answer', () => {
+    expect(run(['答案里提到 <think> 标签'])).toBe('答案里提到 <think> 标签');
+  });
+});
+
+describe('recoverInterruptedLoad', () => {
+  const stash = new Map<string, string>();
+  const KEY = 'loomscape:model-load';
+
+  beforeEach(() => {
+    stash.clear();
+    (globalThis as { localStorage?: unknown }).localStorage = {
+      getItem: (key: string) => stash.get(key) ?? null,
+      setItem: (key: string, value: string) => void stash.set(key, value),
+      removeItem: (key: string) => void stash.delete(key),
+    };
+  });
+
+  afterEach(() => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  });
+
+  it('turns a dangling load marker into an error on that card', () => {
+    stash.set(KEY, JSON.stringify({ modelId: 'qwen3-0.6b', at: Date.now() }));
+    expect(recoverInterruptedLoad()).toBe('qwen3-0.6b');
+    const state = useModelRuntime.getState().models['qwen3-0.6b'];
+    expect(state.state).toBe('error');
+    expect(state.message).toContain('内存');
+  });
+
+  it('clears the marker so the same failure is not reported twice', () => {
+    stash.set(KEY, JSON.stringify({ modelId: 'qwen3-0.6b', at: Date.now() }));
+    recoverInterruptedLoad();
+    expect(stash.has(KEY)).toBe(false);
+    expect(recoverInterruptedLoad()).toBeNull();
+  });
+
+  it('ignores a model this build no longer offers', () => {
+    stash.set(KEY, JSON.stringify({ modelId: 'qwen2.5-0.5b', at: Date.now() }));
+    expect(recoverInterruptedLoad()).toBeNull();
+  });
+
+  it('ignores a marker from a session the user left long ago', () => {
+    stash.set(KEY, JSON.stringify({ modelId: 'qwen3-0.6b', at: Date.now() - 31 * 60 * 1000 }));
+    expect(recoverInterruptedLoad()).toBeNull();
+  });
+
+  it('survives corrupted json', () => {
+    stash.set(KEY, '{not json');
+    expect(recoverInterruptedLoad()).toBeNull();
   });
 });
