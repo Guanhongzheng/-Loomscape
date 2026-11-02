@@ -20,6 +20,7 @@ const entry = (patch: Partial<ModelCacheEntry> = {}): ModelCacheEntry => ({
   bytes: 617_000_000,
   q8: true,
   fp16: false,
+  q4f16: false,
   verifiedAt: Date.now(),
   ...patch,
 });

@@ -31,8 +31,10 @@ export type ModelCacheEntry = {
   bytes: number;
   /** A weight file for the WASM (int8) path is on disk. */
   q8: boolean;
-  /** A weight file for the WebGPU (fp16) path is on disk. */
+  /** A weight file for the WebGPU fp16 path is on disk. */
   fp16: boolean;
+  /** A weight file for the WebGPU 4-bit path is on disk. */
+  q4f16: boolean;
   verifiedAt: number;
 };
 

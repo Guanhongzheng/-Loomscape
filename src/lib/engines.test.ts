@@ -8,6 +8,11 @@ import {
   RETIRED_MODELS,
   RUNTIME_BASE_MB,
   WASM_BUDGET_MB,
+  MAX_FILE_MB,
+  MAX_SHARD_MB,
+  canRun,
+  dtypeFor,
+  exceedsWeightLimit,
   findModel,
   fitsTogether,
   normalisePrefs,
@@ -15,6 +20,7 @@ import {
   roomFor,
   sessionPeakMB,
   sizeFor,
+  splitOf,
   useModelRuntime,
   usedPools,
 } from '@/lib/engines';
@@ -34,7 +40,11 @@ describe('local catalogue', () => {
 
   it('quotes real weight sizes, never a fp32 graph', () => {
     for (const model of ALL_LOCAL_MODELS) {
-      expect(model.sizesMB.q8).toBeGreaterThan(0);
+      if (model.sizesMB.q8 === 0) {
+        // Some repos publish no int8 file at all; those must not offer WASM.
+        expect(canRun(model, 'wasm')).toBe(false);
+        continue;
+      }
       // fp16 must not be smaller than int8; that would be the fp32 figure.
       expect(model.sizesMB.fp16).toBeGreaterThanOrEqual(model.sizesMB.q8);
     }
@@ -105,6 +115,77 @@ describe('normalisePrefs', () => {
 
   it('survives an empty store', () => {
     expect(normalisePrefs(null)).toEqual(DEFAULT_ENGINE_PREFS);
+  });
+});
+
+describe('backend requirements', () => {
+  it('offers a WASM path only where the int8 file fits the heap', () => {
+    const light = findModel('qwen3-0.6b')!;
+    const heavy = findModel('qwen2.5-1.5b')!;
+    expect(canRun(light, 'wasm')).toBe(true);
+    expect(canRun(light, 'webgpu')).toBe(true);
+    // 1.5GB × 3 would be 5GB against a 3.4GB heap; the model is WebGPU-only.
+    expect(canRun(heavy, 'wasm')).toBe(false);
+    expect(canRun(heavy, 'webgpu')).toBe(true);
+  });
+
+  it('keeps every WebGPU-only model inside the GPU budget at 4 bits', () => {
+    for (const model of LOCAL_TEXT.filter((row) => row.requires === 'webgpu')) {
+      expect(model.sizesMB.q4f16).toBeGreaterThan(0);
+      expect(fitsTogether([model], 'webgpu', 'q4f16')).toBe(true);
+      // The card must not advertise a WASM path it cannot take. That is a
+      // harder rule than the heap budget: the 270M would fit numerically, but
+      // its external-data build fails to create a session on that path.
+      expect(canRun(model, 'wasm')).toBe(false);
+    }
+  });
+
+  it('drops the 3B decoder to 4 bits instead of downloading 5.9GB of fp16', () => {
+    const llama = findModel('llama-3.2-3b')!;
+    // fp16 shards fit the per-file ceiling but not the 6GB GPU pool, so the
+    // loader has to resolve to the 4-bit file before the download starts.
+    expect(exceedsWeightLimit(llama, 'fp16')).toBe(false);
+    expect(dtypeFor(llama, 'webgpu')).toBe('q4f16');
+    expect(splitOf(llama, 'q4f16')).toEqual({ files: 3, largestMB: 1999 });
+    // 2.24GB × 1.15 + 128 + base still leaves room for an embedder beside it.
+    expect(roomFor([], llama, 'webgpu', 'q4f16')).toBe(true);
+  });
+});
+
+describe('weight ceiling', () => {
+  it('never resolves a model to a file the runtime cannot open', () => {
+    // 1.17GB loads, 1.36GB dies inside ORT; every default must stay under it.
+    for (const model of ALL_LOCAL_MODELS) {
+      for (const backend of ['wasm', 'webgpu'] as const) {
+        // A pair the card does not offer cannot download anything, so it is
+        // out of scope: canRun() already refuses it before the fetch.
+        if (!canRun(model, backend)) continue;
+        for (const precision of ['fp16', 'q4f16'] as const) {
+          const dtype = dtypeFor(model, backend, precision);
+          expect(exceedsWeightLimit(model, dtype)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('measures the largest shard, not the sum of them', () => {
+    const split = {
+      ...findModel('qwen3-0.6b')!,
+      sizesMB: { q8: 1600, fp16: 1600, q4f16: 1600 },
+      weightSplit: { q8: { files: 4, largestMB: 400 } },
+    };
+    // 1.6GB total in four 400MB shards is fine; the same bytes in one file is not.
+    expect(MAX_SHARD_MB).toBeGreaterThan(MAX_FILE_MB);
+    expect(exceedsWeightLimit(split, 'q8')).toBe(false);
+    expect(exceedsWeightLimit({ ...split, weightSplit: undefined }, 'q8')).toBe(true);
+  });
+
+  it('drops to 4-bit when fp16 alone would exceed the ceiling', () => {
+    const heavy = findModel('qwen2.5-1.5b')!;
+    // fp16 is 2.96GB; the 4-bit file is 1.17GB and is what actually loads.
+    expect(exceedsWeightLimit(heavy, 'fp16')).toBe(true);
+    expect(dtypeFor(heavy, 'webgpu', 'fp16')).toBe('q4f16');
+    expect(exceedsWeightLimit(heavy, 'q4f16')).toBe(false);
   });
 });
 

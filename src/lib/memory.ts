@@ -149,6 +149,7 @@ async function vectorize(texts: string[], embedder: EmbedderInfo): Promise<numbe
     const { vectors } = await embedTexts(model, texts, {
       source: prefs.source,
       backendPreference: prefs.backend,
+      precision: prefs.gpuPrecision,
       report: false,
     });
     if (vectors.length !== texts.length) throw new Error('编码器返回的向量数量不足');

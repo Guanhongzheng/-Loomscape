@@ -17,24 +17,28 @@ import {
   formatBytes,
   poolBudgetMB,
   poolOf,
+  splitOf,
   poolPeakMB,
   // `roomFor` already means "disk space" in this file; the memory question is
   // a different one and gets its own name.
   roomFor as memoryRoomFor,
+  canRun,
+  dtypeFor,
   sizeFor,
   usedPools,
   useEngines,
   useModelRuntime,
   type Backend,
   type EnginePrefs,
+  type GpuPrecision,
   type LocalModel,
+  type ModelDtype,
   type ModelRuntimeState,
   type ResidentPool,
   type ResidentInfo,
 } from '@/lib/engines';
 import {
   backendLabel,
-  dtypeFor,
   loadModel,
   recoverInterruptedLoad,
   removeModel,
@@ -55,6 +59,13 @@ import { cn } from '@/lib/cn';
 type RuntimeFacts = { cores: number; isolated: boolean; threads: number; deviceMemory?: number };
 
 const fieldLabel = 'mb-1.5 block text-[10.5px] text-muted';
+
+/** How each weight file is named to the user. */
+const PRECISION_LABEL: Record<ModelDtype, string> = {
+  q8: 'int8',
+  fp16: 'fp16',
+  q4f16: '4 位',
+};
 
 export function EnginePanel() {
   const prefs = useEngines((state) => state.prefs);
@@ -151,6 +162,7 @@ export function EnginePanel() {
   // "auto" resolves to WASM, so the effective backend is known without asking
   // the adapter; this is what the download size and the cache check key off.
   const backend: Backend = prefs.backend === 'webgpu' ? 'webgpu' : 'wasm';
+  const precision = prefs.gpuPrecision;
 
   /**
    * Loading is the selection: the model that is in memory is the one the
@@ -163,9 +175,13 @@ export function EnginePanel() {
     // both would then patch preferences and toast. The state is written
     // synchronously, so the second click sees it.
     if (useModelRuntime.getState().models[model.id]?.state === 'downloading') return;
+    if (!canRun(model, backend)) {
+      toast(`${model.label} 需要 WebGPU：int8 权重超出 wasm 堆，先在下方把后端切过去`, 'info');
+      return;
+    }
 
     const before = useModelRuntime.getState().residents;
-    const dtype = dtypeFor(model, backend);
+    const dtype = dtypeFor(model, backend, precision);
 
     const memory = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
     if (model.minMemoryGB && memory && memory < model.minMemoryGB) {
@@ -196,7 +212,7 @@ export function EnginePanel() {
     // needs to be parsed into memory.
     if (!cache[model.id]?.[dtype]) {
       const now = await storageUsage();
-      const need = sizeFor(model, backend) * 1024 * 1024;
+      const need = sizeFor(model, backend, precision) * 1024 * 1024;
       if (!roomFor(now, need)) {
         const detail = now
           ? `已用 ${formatBytes(now.used)} / 配额 ${formatBytes(now.quota)}，还差约 ${formatBytes(
@@ -215,6 +231,7 @@ export function EnginePanel() {
       await loadModel(model, {
         source: prefs.source,
         backendPreference: prefs.backend,
+        precision: prefs.gpuPrecision,
         report: true,
       });
 
@@ -297,7 +314,7 @@ export function EnginePanel() {
       }
       await patch({ textMode: 'local' });
       const model = ALL_LOCAL_MODELS.find((item) => item.task === 'text' && item.id === prefs.textModelId);
-      if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend)]) {
+      if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend, precision)]) {
         await activate(model);
       }
       return;
@@ -309,7 +326,7 @@ export function EnginePanel() {
     const model = ALL_LOCAL_MODELS.find(
       (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
     );
-    if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend)]) {
+    if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend, precision)]) {
       await activate(model);
     }
   };
@@ -320,7 +337,7 @@ export function EnginePanel() {
   // were flushed, otherwise a just-loaded model still offers "去下载".
   const textReady =
     residents.some((row) => row.modelId === prefs.textModelId) ||
-    (textModel ? (cache[textModel.id]?.[dtypeFor(textModel, backend)] ?? false) : false);
+    (textModel ? (cache[textModel.id]?.[dtypeFor(textModel, backend, precision)] ?? false) : false);
   const cloudReady = hasKey(draft);
   const loadingModel = ALL_LOCAL_MODELS.find((model) => models[model.id]?.state === 'downloading');
   const usedPercent = usage && usage.quota > 0 ? Math.round(usage.ratio * 100) : 0;
@@ -359,6 +376,7 @@ export function EnginePanel() {
     cache,
     residents,
     backend,
+    precision,
     onActivate: activate,
     onUnload: (model: LocalModel) => unload(model.id, model.label),
     onDrop: drop,
@@ -526,6 +544,17 @@ export function EnginePanel() {
                 <span className="text-ink/80">
                   {loadingModel.label} · 加载中{' '}
                   {Math.round((loadingState?.progress ?? 0) * 100)}%
+                  {loadingState?.total ? (
+                    <span className="ml-1.5 font-mono text-[10px] text-muted/65">
+                      {formatBytes(loadingState.loaded ?? 0)} / {formatBytes(loadingState.total)}
+                    </span>
+                  ) : null}
+                  {/* External data arrives as `_data` shards, one after
+                      another; naming the phase stops a 2GB leg from looking
+                      like a stalled graph download. */}
+                  {loadingState?.file?.includes('_data') ? (
+                    <span className="ml-1.5 text-[10px] text-muted/60">权重分片</span>
+                  ) : null}
                 </span>
               ) : null}
 
@@ -603,11 +632,33 @@ export function EnginePanel() {
                 className="h-8 w-full text-[11.5px] sm:w-[190px]"
               >
                 <option value="auto">后端 · WASM 量化</option>
-                <option value="webgpu">后端 · WebGPU fp16</option>
+                <option value="webgpu">后端 · WebGPU</option>
                 <option value="wasm">后端 · WASM</option>
               </Select>
+              {/* Only meaningful where there is a choice: WASM has one int8
+                  path, and `q4` is bigger than int8 on these repos. */}
+              {backend === 'webgpu' ? (
+                <Select
+                  aria-label="WebGPU 精度"
+                  value={prefs.gpuPrecision}
+                  onChange={(event) =>
+                    void patch({ gpuPrecision: event.target.value as GpuPrecision })
+                  }
+                  className="h-8 w-full text-[11.5px] sm:w-[176px]"
+                >
+                  <option value="fp16">精度 · fp16</option>
+                  <option value="q4f16">精度 · 4 位（省一半）</option>
+                </Select>
+              ) : null}
             </div>
           </div>
+
+          {backend === 'webgpu' && prefs.gpuPrecision === 'q4f16' ? (
+            <p className="text-[10.5px] leading-relaxed text-muted/60">
+              4 位只作用于文本模型，省一半显存；嵌入模型仍走 fp16——BGE 的 4 位会话在 WebGPU
+              上建不起来（ONNX Runtime 1151160272），而它本来就只有百兆级。
+            </p>
+          ) : null}
 
         <ModelGroup
           title="文本模型"
@@ -660,6 +711,7 @@ type RowProps = {
   cache: Record<string, CacheStats>;
   residents: ResidentInfo[];
   backend: Backend;
+  precision: GpuPrecision;
   onActivate: (model: LocalModel) => Promise<void>;
   onUnload: (model: LocalModel) => Promise<void>;
   onDrop: (model: LocalModel) => Promise<void>;
@@ -694,6 +746,7 @@ function ModelRow({
   cache,
   residents,
   backend,
+  precision,
   onActivate,
   onUnload,
   onDrop,
@@ -702,13 +755,24 @@ function ModelRow({
   const state = runtime[model.id];
   const stats = cache[model.id];
   const loadedNow = residents.some((row) => row.modelId === model.id);
-  const dtype = dtypeFor(model, backend);
-  const other = dtype === 'q8' ? 'fp16' : 'q8';
+  // A WebGPU-only model has no file the WASM heap can take, so the row quotes
+  // the 4-bit size and states the requirement instead of offering a load that
+  // would abort the tab.
+  const blocked = !canRun(model, backend);
+  const dtype = blocked ? 'q4f16' : dtypeFor(model, backend, precision);
+  // fp16 for this model is larger than the runtime can turn into a session, so
+  // the loader quietly picked 4-bit; the row has to say that out loud.
+  const downgraded = !blocked && precision !== 'q4f16' && dtype === 'q4f16';
+  const split = splitOf(model, dtype);
+  const residentDtype = residents.find((row) => row.modelId === model.id)?.dtype;
   // A just-loaded model is ready even if the cache scan ran a beat too early
   // to see its weight file.
-  const ready = (stats?.[dtype] ?? false) || loadedNow;
-  // The other precision is on disk but this backend cannot run it.
-  const otherReady = !ready && (stats?.[other] ?? false);
+  const ready = !blocked && ((stats?.[dtype] ?? false) || loadedNow);
+  // Some other precision is on disk but this backend cannot run it.
+  const alternate = (['q8', 'fp16', 'q4f16'] as ModelDtype[]).find(
+    (item) => item !== dtype && (stats?.[item] ?? false),
+  );
+  const otherReady = !ready && Boolean(alternate);
   const leftovers = !ready && !otherReady && (stats?.files ?? 0) > 0;
   const loading = state?.state === 'downloading';
   const failed = state?.state === 'error';
@@ -727,16 +791,21 @@ function ModelRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="text-[13px] text-ink/90">{model.label}</h4>
-            {loadedNow ? (
+            {blocked && !loadedNow ? (
+              <span className="text-[10px] text-muted/60">仅 WebGPU</span>
+            ) : loadedNow ? (
               <span className="flex items-center gap-1 text-[10px] text-[#3f6b4f]">
                 <Check size={11} />
                 已加载
+                {residentDtype && residentDtype !== dtype
+                  ? `（${PRECISION_LABEL[residentDtype]}）`
+                  : ''}
               </span>
             ) : ready ? (
               <span className="text-[10px] text-muted/60">已下载</span>
-            ) : otherReady ? (
+            ) : otherReady && alternate ? (
               <span className="text-[10px] text-muted/55">
-                仅有 {other === 'q8' ? 'int8' : 'fp16'} 权重
+                仅有 {PRECISION_LABEL[alternate]} 权重
               </span>
             ) : leftovers ? (
               <span className="text-[10px] text-muted/50">旧权重</span>
@@ -744,14 +813,28 @@ function ModelRow({
           </div>
           <p className="mt-1 text-[11px] leading-relaxed text-muted/85">{model.note}</p>
           <p className="mt-1.5 text-[10.5px] text-muted/60">
-            约 {formatBytes(sizeFor(model, backend) * 1024 * 1024)} ·{' '}
-            {backend === 'webgpu' ? 'fp16' : 'int8'}
+            约{' '}
+            {formatBytes(
+              (blocked ? model.sizesMB.q4f16 : sizeFor(model, backend, precision)) * 1024 * 1024,
+            )}{' '}
+            · {PRECISION_LABEL[dtype]}
+            {blocked ? ' · 需 WebGPU' : downgraded ? ' · 已降到 4 位' : ''}
+            {split.files > 1 ? ` · ${split.files} 个权重文件` : ''}
             {model.dims ? ` · ${model.dims} 维` : ` · ${model.languages}`}
             {stats && stats.bytes > 0 ? ` · 占 ${formatBytes(stats.bytes)}` : ''}
           </p>
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* A loaded session keeps the file it was opened from, so changing
+              the precision needs a reload rather than a silent relabel. */}
+          {loadedNow && residentDtype && residentDtype !== dtype ? (
+            <Button variant="soft" size="sm" onClick={() => void onActivate(model)} disabled={loading}>
+              <RefreshCw size={11} className={loading ? 'animate-spin' : undefined} />
+              {loading ? '切换中' : `切换到 ${PRECISION_LABEL[dtype]}`}
+            </Button>
+          ) : null}
+
           {loadedNow ? (
             <Button variant="ghost" size="sm" onClick={() => void onUnload(model)}>
               <Power size={11} />
@@ -764,10 +847,11 @@ function ModelRow({
               variant={!ready && accent ? 'primary' : 'soft'}
               size="sm"
               onClick={() => void onActivate(model)}
-              disabled={loading}
+              disabled={loading || blocked}
+              title={blocked ? 'int8 权重超出 wasm 堆，需要在设置里把后端切到 WebGPU' : undefined}
             >
               {loading ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-              {loading ? '加载中' : ready ? '加载' : '下载并加载'}
+              {loading ? '加载中' : blocked ? '需 WebGPU' : ready ? '加载' : '下载并加载'}
             </Button>
           )}
 

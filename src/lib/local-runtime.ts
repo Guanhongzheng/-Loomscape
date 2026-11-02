@@ -1,6 +1,10 @@
 'use client';
 
 import {
+  MAX_FILE_MB,
+  canRun,
+  dtypeFor,
+  exceedsWeightLimit,
   findModel,
   fitsTogether,
   poolBudgetMB,
@@ -9,6 +13,7 @@ import {
   sessionPeakMB,
   useModelRuntime,
   type Backend,
+  type GpuPrecision,
   type LocalModel,
   type ModelDtype,
   type ModelSource,
@@ -152,6 +157,8 @@ export function backendLabel(backend?: Backend): string {
 type LoadOptions = {
   source: ModelSource;
   backendPreference: 'auto' | Backend;
+  /** Which WebGPU precision to run; ignored on the WASM path. */
+  precision?: GpuPrecision;
   report?: boolean;
 };
 
@@ -240,6 +247,7 @@ type Resident = {
   key: string;
   backend: Backend;
   threads: number;
+  dtype: ModelDtype;
   peakMB: number;
 };
 
@@ -250,16 +258,6 @@ type Resident = {
  * first, and a pair that does not fit evicts the older side.
  */
 let residents: Resident[] = [];
-
-/**
- * WebGPU runs fp16, never fp32. The fp32 graph for these repos is a 0.6MB
- * topology plus a 2.1GB external-data file, which is both a much larger
- * download and past the point where a single ArrayBuffer can be wrapped in a
- * Response — that is the RangeError the runtime used to throw.
- */
-export function dtypeFor(model: LocalModel, backend: Backend): ModelDtype {
-  return backend === 'webgpu' ? 'fp16' : model.dtype;
-}
 
 async function dispose(pipe: unknown): Promise<void> {
   const candidate = pipe as { dispose?: () => Promise<void> | void };
@@ -352,6 +350,7 @@ function recordResident(next: Resident): void {
     task: next.task,
     backend: next.backend,
     threads: next.threads,
+    dtype: next.dtype,
     peakMB: next.peakMB,
   });
 }
@@ -397,7 +396,28 @@ async function loadPipeline(model: LocalModel, options: LoadOptions): Promise<{ 
 async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe: any; backend: Backend }> {
   const mod = await runtime(options.source);
   const backend = await detectBackend(options.backendPreference);
-  const dtype = dtypeFor(model, backend);
+  const precision = options.precision ?? 'fp16';
+  // A decoder whose int8 file exceeds the 4GB heap has no WASM path at all;
+  // starting the download anyway would end in `Aborted()` after 1.6GB.
+  if (!canRun(model, backend)) {
+    const message = `${model.label} 只能在 WebGPU 上运行：int8 权重约 ${model.sizesMB.q8}MB，超出 wasm 堆`;
+    if (options.report) {
+      useModelRuntime.getState().set(model.id, { state: 'error', progress: 0, backend, message });
+    }
+    throw new Error(message);
+  }
+  const dtype = dtypeFor(model, backend, precision);
+  // The runtime copies the fetched buffer into the wasm heap, so one file over
+  // ~1.2GB fails at session creation after the whole download. Say so first.
+  if (exceedsWeightLimit(model, dtype)) {
+    const message = `${model.label} 的权重 ${model.sizesMB[dtype]}MB 超过单文件上限（约 ${
+      MAX_FILE_MB / 1024
+    }GB）：下载完成后 ONNX Runtime 会在建会话时耗尽内存`;
+    if (options.report) {
+      useModelRuntime.getState().set(model.id, { state: 'error', progress: 0, backend, message });
+    }
+    throw new Error(message);
+  }
   // An embedder loaded next to a decoder gives up half its threads: the pair
   // shares one heap, and worker arenas are the part that grows with threads.
   const sharing = model.task === 'embedding' && residents.some((row) => row.task === 'text');
@@ -415,14 +435,15 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     key,
     backend,
     threads,
-    peakMB: sessionPeakMB(model, backend),
+    dtype,
+    peakMB: sessionPeakMB(model, backend, precision),
   };
 
   // A session that cannot fit its own pool used to be attempted anyway: the
   // eviction loop only ran when something else was loaded, so a too-large
   // model went straight to `Aborted()` and took the tab with it. Refusing here
   // turns that into a card that says why.
-  if (!fitsTogether([model], backend)) {
+  if (!fitsTogether([model], backend, precision)) {
     const pool = poolOf(backend);
     const needGB = ((poolPeakMB([], pool) + next.peakMB) / 1024).toFixed(1);
     const capGB = (poolBudgetMB(pool) / 1024).toFixed(1);
@@ -473,12 +494,19 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
         loaded += Math.min(row.loaded, row.total);
         total += row.total;
       });
+      // A sharded model starts each `_data` file only after the previous one
+      // finishes, so a denominator built from "files seen so far" makes the bar
+      // jump backwards at every shard boundary (90% → 45%). The catalogue knows
+      // the finished weight size, so use it as the floor: progress then tracks
+      // the whole download and the label reads 1.4 / 2.2 GB across shards.
+      const expected = model.sizesMB[dtype] * 1024 * 1024;
+      const denominator = Math.max(total, expected);
       runtimeStore.set(model.id, {
         state: 'downloading',
-        progress: total > 0 ? Math.min(loaded / total, 0.999) : 0,
+        progress: denominator > 0 ? Math.min(loaded / denominator, 0.999) : 0,
         file: event.file,
         loaded,
-        total,
+        total: denominator,
         backend,
       });
     } else if (event.status === 'initiate' && event.file) {
@@ -547,16 +575,12 @@ const CACHE_NAME = 'transformers-cache';
  * a cached config, tokenizer, or a different quantisation would otherwise be
  * reported as ready and the load would fail on a missing ONNX file.
  */
-export function weightFile(dtype: ModelDtype | 'q4'): string {
-  if (dtype === 'q4') return 'model_q4.onnx';
+export function weightFile(dtype: ModelDtype): string {
+  if (dtype === 'q4f16') return 'model_q4f16.onnx';
   return dtype === 'fp16' ? 'model_fp16.onnx' : 'model_quantized.onnx';
 }
 
-export function isWeightRequest(
-  url: string,
-  repo: string,
-  dtype: ModelDtype | 'q4' = 'q8',
-): boolean {
+export function isWeightRequest(url: string, repo: string, dtype: ModelDtype = 'q8'): boolean {
   if (!url.includes(repo)) return false;
   try {
     return new URL(url).pathname.endsWith(`/${weightFile(dtype)}`);
@@ -565,12 +589,29 @@ export function isWeightRequest(
   }
 }
 
+/**
+ * How many cache entries belong to one precision. A split model writes the
+ * graph and one `_data` file per shard, all sharing the graph's name as prefix,
+ * so counting them is enough to tell a finished download from an interrupted
+ * one that only got the 0.2MB graph.
+ */
+export function weightShards(files: Iterable<string>, dtype: ModelDtype): number {
+  const prefix = weightFile(dtype);
+  let count = 0;
+  for (const path of files) {
+    const name = path.slice(path.lastIndexOf('/') + 1);
+    if (name === prefix || name.startsWith(`${prefix}_data`)) count += 1;
+  }
+  return count;
+}
+
 export type CacheStats = {
   files: number;
   bytes: number;
-  /** Weight files that are on disk, by the backend that can run them. */
+  /** Weight files that are on disk, by the precision that can run them. */
   q8: boolean;
   fp16: boolean;
+  q4f16: boolean;
 };
 
 /**
@@ -579,10 +620,12 @@ export type CacheStats = {
  * measured, which is why `bytes` can be lower than the model card claims.
  */
 export async function scanModelCache(
-  models: Array<{ id: string; repo: string }>,
+  models: Array<{ id: string; repo: string } & { weightSplit?: LocalModel['weightSplit'] }>,
 ): Promise<Record<string, CacheStats>> {
   const result: Record<string, CacheStats> = {};
-  for (const model of models) result[model.id] = { files: 0, bytes: 0, q8: false, fp16: false };
+  for (const model of models) {
+    result[model.id] = { files: 0, bytes: 0, q8: false, fp16: false, q4f16: false };
+  }
 
   if (typeof caches === 'undefined') return result;
 
@@ -629,8 +672,12 @@ export async function scanModelCache(
       const row = result[model.id];
       row.files = requests.length;
       row.bytes = Object.values(sizes).reduce((sum, size) => sum + size, 0);
-      row.q8 = requests.some((request) => isWeightRequest(request.url, model.repo, 'q8'));
-      row.fp16 = requests.some((request) => isWeightRequest(request.url, model.repo, 'fp16'));
+      // A precision counts as downloaded only when every shard is on disk.
+      const expected = (dtype: ModelDtype) =>
+        (model.weightSplit?.[dtype] ?? { files: 1 }).files;
+      row.q8 = weightShards(paths, 'q8') >= expected('q8');
+      row.fp16 = weightShards(paths, 'fp16') >= expected('fp16');
+      row.q4f16 = weightShards(paths, 'q4f16') >= expected('q4f16');
 
       const previous = index[model.id];
       const stale =
@@ -639,6 +686,7 @@ export async function scanModelCache(
         previous.bytes !== row.bytes ||
         previous.q8 !== row.q8 ||
         previous.fp16 !== row.fp16 ||
+        previous.q4f16 !== row.q4f16 ||
         !isFresh(previous, now);
       if (stale) {
         writes.push({
@@ -648,6 +696,7 @@ export async function scanModelCache(
           bytes: row.bytes,
           q8: row.q8,
           fp16: row.fp16,
+          q4f16: row.q4f16,
           verifiedAt: now,
         });
       }
@@ -675,29 +724,36 @@ export async function hasWeights(repo: string): Promise<boolean> {
   // One lookup answers the common case; the fallback scan is only for a cold
   // or expired index, which `scanModelCache` refreshes on the settings page.
   const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
-  if (indexed) return indexed.q8 || indexed.fp16;
+  if (indexed) return indexed.q8 || indexed.fp16 || indexed.q4f16;
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
     return keys.some(
       (request) =>
-        isWeightRequest(request.url, repo, 'q8') || isWeightRequest(request.url, repo, 'fp16'),
+        isWeightRequest(request.url, repo, 'q8') ||
+        isWeightRequest(request.url, repo, 'fp16') ||
+        isWeightRequest(request.url, repo, 'q4f16'),
     );
   } catch {
     return false;
   }
 }
 
-export async function isModelCached(repo: string, dtype: ModelDtype | 'q4' = 'q8'): Promise<boolean> {
+export async function isModelCached(
+  repo: string,
+  dtype: ModelDtype = 'q8',
+  files = 1,
+): Promise<boolean> {
   if (typeof caches === 'undefined') return false;
-  if (dtype !== 'q4') {
-    const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
-    if (indexed) return dtype === 'fp16' ? indexed.fp16 : indexed.q8;
-  }
+  const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
+  // Recompute from the recorded file list instead of trusting the stored
+  // boolean: an interrupted split download used to look complete forever.
+  if (indexed) return weightShards(Object.keys(indexed.files), dtype) >= files;
   try {
     const cache = await caches.open(CACHE_NAME);
     const keys = await cache.keys();
-    return keys.some((request) => isWeightRequest(request.url, repo, dtype));
+    const names = keys.filter((request) => request.url.includes(repo)).map((request) => request.url);
+    return weightShards(names, dtype) >= files;
   } catch {
     return false;
   }
@@ -732,6 +788,34 @@ export async function embedTexts(
   const output = await exclusive(model.id, () => run(texts, { pooling, normalize: true }));
   const rows = typeof output.tolist === 'function' ? output.tolist() : output;
   return { vectors: rows as number[][], backend };
+}
+
+/**
+ * Prompt construction for models that ship their own chat template. Qwen speaks
+ * ChatML, so the hand-written string below is correct for it; Llama and Gemma
+ * use their own special tokens, and pairing them with ChatML makes the model
+ * answer and then keep going into the next turn instead of stopping at EOS.
+ * The template comes from the repo's tokenizer, so a new model needs no code.
+ */
+export function promptFor(
+  tokenizer: { apply_chat_template?: (messages: unknown, options?: unknown) => unknown } | undefined,
+  system: string,
+  turns: Array<{ role: string; content: string }>,
+  prefill = '',
+  useTemplate = false,
+): string {
+  if (useTemplate && typeof tokenizer?.apply_chat_template === 'function') {
+    try {
+      const text = tokenizer.apply_chat_template([{ role: 'system', content: system }, ...turns], {
+        tokenize: false,
+        add_generation_prompt: true,
+      });
+      if (typeof text === 'string' && text.length > 0) return text + prefill;
+    } catch {
+      // A repo without a usable template falls back to the ChatML string.
+    }
+  }
+  return chatPrompt(system, turns, prefill);
 }
 
 export function chatPrompt(
@@ -836,6 +920,62 @@ export function createReasoningFilter(emit: (text: string) => void) {
   };
 }
 
+/**
+ * Turn markers that a decoder can emit as plain text when it is fed a prompt
+ * built for another family, or when it starts a second turn of its own. They
+ * are kept out of the transcript by cutting the stream at the first one.
+ */
+const TURN_MARKERS = [
+  '<|eot_id|>',
+  '<|eom_id|>',
+  '<|end_of_text|>',
+  '<|im_end|>',
+  '<|fim_end|>',
+  '<|endoftext|>',
+  '<end_of_turn>',
+  '</s>',
+];
+
+export function createStopFilter(emit: (text: string) => void) {
+  let held = '';
+  let done = false;
+  // A marker split across tokens must not leak, so a tail that could still
+  // become one is held back until the next chunk decides it.
+  return {
+    push(chunk: string) {
+      if (done) return;
+      held += chunk;
+      let cut = -1;
+      for (const marker of TURN_MARKERS) {
+        const at = held.indexOf(marker);
+        if (at !== -1 && (cut === -1 || at < cut)) cut = at;
+      }
+      if (cut !== -1) {
+        if (cut > 0) emit(held.slice(0, cut));
+        done = true;
+        held = '';
+        return;
+      }
+      let hold = 0;
+      for (const marker of TURN_MARKERS) {
+        for (let size = Math.min(marker.length - 1, held.length); size > 0; size -= 1) {
+          if (held.endsWith(marker.slice(0, size))) hold = Math.max(hold, size);
+        }
+      }
+      const ready = held.length - hold;
+      if (ready > 0) {
+        emit(held.slice(0, ready));
+        held = held.slice(ready);
+      }
+    },
+    flush() {
+      if (!done && held) emit(held);
+      held = '';
+      done = true;
+    },
+  };
+}
+
 export async function streamLocal(options: {
   model: LocalModel;
   source: ModelSource;
@@ -860,10 +1000,11 @@ export async function streamLocal(options: {
     (prompt: string, options: Record<string, unknown>): Promise<unknown>;
   };
 
-  const filter = createReasoningFilter((text) => {
+  const stop = createStopFilter((text) => {
     produced += text;
     options.onToken(text);
   });
+  const filter = createReasoningFilter((text) => stop.push(text));
 
   const streamer = new mod.TextStreamer(runner.tokenizer, {
     skip_prompt: true,
@@ -875,19 +1016,29 @@ export async function streamLocal(options: {
   });
 
   await exclusive(options.model.id, () =>
-    runner(chatPrompt(options.system, options.turns, options.model.prefill), {
-      max_new_tokens: options.maxTokens ?? 512,
-      do_sample: true,
-      temperature: options.temperature ?? 0.7,
-      top_p: 0.9,
-      // 1.05 let a 0.5B model settle on a phrase and loop; 1.18 over-corrected
-      // and pushed it away from tokens it had just read (digits included), so
-      // the penalty sits in the middle and the n-gram guard is gone.
-      repetition_penalty: 1.1,
-      streamer,
-    }),
+    runner(
+      promptFor(
+        runner.tokenizer as { apply_chat_template?: (m: unknown, o?: unknown) => unknown },
+        options.system,
+        options.turns,
+        options.model.prefill ?? '',
+        options.model.chatTemplate === true,
+      ),
+      {
+        max_new_tokens: options.maxTokens ?? 512,
+        do_sample: true,
+        temperature: options.temperature ?? 0.7,
+        top_p: 0.9,
+        // 1.05 let a 0.5B model settle on a phrase and loop; 1.18 over-corrected
+        // and pushed it away from tokens it had just read (digits included), so
+        // the penalty sits in the middle and the n-gram guard is gone.
+        repetition_penalty: 1.1,
+        streamer,
+      },
+    ),
   );
   filter.flush();
+  stop.flush();
 
   backends.set(options.model.id, backend);
   return produced;

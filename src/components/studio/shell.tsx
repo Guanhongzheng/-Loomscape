@@ -9,9 +9,12 @@ import { useAuth, wasSignedOut } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
 import {
   ALL_LOCAL_MODELS,
+  canRun,
+  dtypeFor,
   findModel,
   poolOf,
   roomFor,
+  splitOf,
   useEngines,
   useModelRuntime,
   type LocalModel,
@@ -19,7 +22,6 @@ import {
 import { describeError } from '@/lib/errors';
 import {
   detectBackend,
-  dtypeFor,
   isModelCached,
   isResident,
   loadModel,
@@ -139,7 +141,15 @@ export function StudioShell({
 
       for (const candidate of wanted) {
         if (isResident(candidate.id)) continue;
-        if (!(await isModelCached(candidate.repo, dtypeFor(candidate, backend)))) continue;
+        if (!canRun(candidate, backend)) {
+          toast(`${candidate.label} 需要 WebGPU，当前后端是 WASM，已跳过自动加载`, 'info');
+          continue;
+        }
+        const dtype = dtypeFor(candidate, backend, prefs.gpuPrecision);
+        // Split models need every shard on disk, not just the graph file.
+        if (!(await isModelCached(candidate.repo, dtype, splitOf(candidate, dtype).files))) {
+          continue;
+        }
 
         // A decoder session peaks in the gigabytes. On a 4GB device that is
         // the difference between a workspace and a crashed tab, so leave it to
@@ -155,7 +165,7 @@ export function StudioShell({
         // Pairing is budgeted per pool: a GPU session does not spend wasm heap,
         // so the check reads each resident's own backend instead of assuming
         // both sides run where the preference points.
-        if (!roomFor(useModelRuntime.getState().residents, candidate, backend)) {
+        if (!roomFor(useModelRuntime.getState().residents, candidate, backend, prefs.gpuPrecision)) {
           toast(
             `${candidate.label} 与已加载的模型超出${
               poolOf(backend) === 'gpu' ? '显存' : ' WASM 内存'
@@ -169,6 +179,7 @@ export function StudioShell({
           await loadModel(candidate, {
             source: prefs.source,
             backendPreference: prefs.backend,
+            precision: prefs.gpuPrecision,
             report: true,
           });
         } catch (error) {

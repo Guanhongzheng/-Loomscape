@@ -7,11 +7,20 @@ import path from 'node:path';
  * node_modules. They are copied into public/runtime and loaded with a native
  * dynamic import, which keeps webpack out of the picture entirely — the
  * onnxruntime bundle uses import.meta and does not survive bundling.
+ *
+ * transformers 4.x no longer ships the wasm binary, only the 46KB JS glue, so
+ * the pair is taken from onnxruntime-web. Both files must come from the same
+ * build: the glue and the binary share an ABI, and a mismatch fails at
+ * `WebAssembly.instantiate` with no useful message.
  */
 const files = [
   ['@huggingface/transformers', 'transformers.min.js'],
-  ['@huggingface/transformers', 'ort-wasm-simd-threaded.jsep.wasm'],
-  ['@huggingface/transformers', 'ort-wasm-simd-threaded.jsep.mjs'],
+  // 4.x imports the asyncify build by name (`Failed to fetch dynamically
+  // imported module: /runtime/ort-wasm-simd-threaded.asyncify.mjs`), and it
+  // serves both CPU and WebGPU sessions. The jsep pair is what 3.x wanted and
+  // is no longer referenced, so it is not vendored — 28MB of dead weight.
+  ['onnxruntime-web', 'ort-wasm-simd-threaded.asyncify.mjs'],
+  ['onnxruntime-web', 'ort-wasm-simd-threaded.asyncify.wasm'],
 ];
 
 const target = path.join(process.cwd(), 'public', 'runtime');

@@ -115,10 +115,14 @@ export async function setAnnouncement(
   text: string,
   by: string,
 ): Promise<Conversation> {
+  // One timestamp for both records: the reader compares its announcement
+  // watermark against `updatedAt`, so two `Date.now()` calls can leave the
+  // conversation a millisecond ahead of the announcement it is versioning.
+  const at = Date.now();
   return saveConversation({
     ...conversation,
-    announcement: { text: text.trim().slice(0, 400), updatedAt: Date.now(), by },
-    updatedAt: Date.now(),
+    announcement: { text: text.trim().slice(0, 400), updatedAt: at, by },
+    updatedAt: at,
   });
 }
 

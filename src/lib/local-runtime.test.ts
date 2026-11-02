@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   chatPrompt,
   createReasoningFilter,
-  dtypeFor,
+  createStopFilter,
+  promptFor,
   isWeightRequest,
   recoverInterruptedLoad,
   runtimeInfo,
   threadCount,
   weightFile,
 } from '@/lib/local-runtime';
-import { LOCAL_TEXT, sizeFor, useModelRuntime } from '@/lib/engines';
+import { LOCAL_EMBEDDINGS, LOCAL_TEXT, dtypeFor, sizeFor, useModelRuntime } from '@/lib/engines';
 
 describe('threadCount', () => {
   it('leaves one core to the UI and caps at four', () => {
@@ -67,16 +68,35 @@ describe('dtype selection', () => {
     expect(dtypeFor(model, 'wasm')).toBe('q8');
   });
 
+  it('runs 4-bit only when asked for, and only on WebGPU', () => {
+    expect(dtypeFor(model, 'webgpu', 'q4f16')).toBe('q4f16');
+    // WASM keeps int8: `model_q4.onnx` there carries fp32 activations and is
+    // larger than the int8 file, so it would cost memory instead of saving it.
+    expect(dtypeFor(model, 'wasm', 'q4f16')).toBe('q8');
+  });
+
+  it('keeps embedders on fp16 even when 4-bit is requested', () => {
+    // A BGE q4f16 session fails to build under the WebGPU EP (ORT 1151160272),
+    // so the saving stays on the decoder.
+    const embedder = LOCAL_EMBEDDINGS[1];
+    expect(dtypeFor(embedder, 'webgpu', 'q4f16')).toBe('fp16');
+    expect(dtypeFor(embedder, 'webgpu')).toBe('fp16');
+  });
+
   it('maps each dtype to a file the hub actually has', () => {
     expect(weightFile('q8')).toBe('model_quantized.onnx');
     expect(weightFile('fp16')).toBe('model_fp16.onnx');
+    expect(weightFile('q4f16')).toBe('model_q4f16.onnx');
   });
 
   it('quotes the size of the precision that will be fetched', () => {
     expect(sizeFor(model, 'wasm')).toBe(model.sizesMB.q8);
     expect(sizeFor(model, 'webgpu')).toBe(model.sizesMB.fp16);
     expect(sizeFor(model, 'auto')).toBe(model.sizesMB.q8);
-    expect(sizeFor(model, 'webgpu')).toBeGreaterThan(sizeFor(model, 'wasm'));
+    expect(sizeFor(model, 'webgpu', 'q4f16')).toBe(model.sizesMB.q4f16);
+    // The reason the option exists: 4-bit is smaller than both alternatives.
+    expect(sizeFor(model, 'webgpu', 'q4f16')).toBeLessThan(sizeFor(model, 'wasm'));
+    expect(sizeFor(model, 'webgpu', 'q4f16')).toBeLessThan(sizeFor(model, 'webgpu'));
   });
 });
 
@@ -86,7 +106,7 @@ describe('isWeightRequest', () => {
 
   it('accepts the weight file that matches the dtype', () => {
     expect(isWeightRequest(at('model_quantized.onnx'), repo, 'q8')).toBe(true);
-    expect(isWeightRequest(at('model_q4.onnx'), repo, 'q4')).toBe(true);
+    expect(isWeightRequest(at('model_q4f16.onnx'), repo, 'q4f16')).toBe(true);
   });
 
   it('accepts fp16 for the WebGPU path', () => {
@@ -95,9 +115,9 @@ describe('isWeightRequest', () => {
   });
 
   it('rejects a different quantisation', () => {
-    // Switching q4 to q8 must not leave the old file looking ready.
-    expect(isWeightRequest(at('model_q4.onnx'), repo, 'q8')).toBe(false);
-    expect(isWeightRequest(at('model_quantized.onnx'), repo, 'q4')).toBe(false);
+    // Switching q4f16 to q8 must not leave the old file looking ready.
+    expect(isWeightRequest(at('model_q4f16.onnx'), repo, 'q8')).toBe(false);
+    expect(isWeightRequest(at('model_quantized.onnx'), repo, 'q4f16')).toBe(false);
   });
 
   it('rejects config and tokenizer entries', () => {
@@ -139,6 +159,62 @@ describe('chatPrompt', () => {
       { role: 'user', content: '三' },
     ]);
     expect(prompt.match(/<\|im_start\|>system/g)).toHaveLength(1);
+  });
+});
+
+describe('promptFor', () => {
+  const turns = [{ role: 'user' as const, content: '写一句开场' }];
+
+  it('leaves ChatML models on the hand-written string', () => {
+    const tokenizer = { apply_chat_template: () => '<|start_header_id|>x' };
+    expect(promptFor(tokenizer, '你是编辑', turns, '', false)).toBe(chatPrompt('你是编辑', turns));
+  });
+
+  it('uses the repo template when the model declares one', () => {
+    const tokenizer = {
+      apply_chat_template: (_messages: unknown, options?: unknown) =>
+        `<|start_header_id|>assistant<|end_header_id|>${
+          (options as { add_generation_prompt?: boolean } | undefined)?.add_generation_prompt ? '!' : ''
+        }`,
+    };
+    const prompt = promptFor(tokenizer, '你是编辑', turns, '<seed>', true);
+    expect(prompt).toBe('<|start_header_id|>assistant<|end_header_id|>!<seed>');
+  });
+
+  it('falls back when the repo has no usable template', () => {
+    const broken = {
+      apply_chat_template: () => {
+        throw new Error('no template');
+      },
+    };
+    expect(promptFor(broken, '你是编辑', turns, '', true)).toBe(chatPrompt('你是编辑', turns));
+    expect(promptFor(undefined, '你是编辑', turns, '', true)).toBe(chatPrompt('你是编辑', turns));
+  });
+});
+
+describe('stop filter', () => {
+  const run = (chunks: string[]) => {
+    const out: string[] = [];
+    const filter = createStopFilter((text) => out.push(text));
+    chunks.forEach((chunk) => filter.push(chunk));
+    filter.flush();
+    return out.join('');
+  };
+
+  it('cuts the transcript at a turn marker', () => {
+    expect(run(['潮汐是月球引力', '造成的。', '<|eot_id|>assistant 还想说'])).toBe('潮汐是月球引力造成的。');
+  });
+
+  it('holds a marker split across tokens so it never leaks', () => {
+    expect(run(['答案', '<|eo', 't_id|>', '后面不要'])).toBe('答案');
+  });
+
+  it('keeps a trailing "<" that is not a marker', () => {
+    expect(run(['a < b'])).toBe('a < b');
+  });
+
+  it('emits everything when no marker appears', () => {
+    expect(run(['第一段', '，第二段'])).toBe('第一段，第二段');
   });
 });
 

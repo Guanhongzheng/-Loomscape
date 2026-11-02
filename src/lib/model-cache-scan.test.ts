@@ -56,6 +56,30 @@ beforeEach(async () => {
   await dropEntry('qwen3-0.6b');
 });
 
+describe('sharded weights', () => {
+  // Gemma 3 270M ships a 0.2MB graph plus one `_data` blob; counting only the
+  // graph is what made an interrupted download look finished.
+  const split = [{ id: 'qwen3-0.6b', repo: REPO, weightSplit: { q8: { files: 2, largestMB: 520 } } }];
+
+  it('is not ready while only the graph file is on disk', async () => {
+    fakeCache({ [at('model_quantized.onnx')]: 200_000 });
+    const rows = await scanModelCache(split);
+    expect(rows['qwen3-0.6b'].q8).toBe(false);
+    expect(await isModelCached(REPO, 'q8', 2)).toBe(false);
+  });
+
+  it('is ready once every shard lands', async () => {
+    fakeCache({
+      [at('model_quantized.onnx')]: 200_000,
+      [at('model_quantized.onnx_data')]: 520_000_000,
+    });
+    const rows = await scanModelCache(split);
+    expect(rows['qwen3-0.6b'].q8).toBe(true);
+    expect(rows['qwen3-0.6b'].bytes).toBe(520_200_000);
+    expect(await isModelCached(REPO, 'q8', 2)).toBe(true);
+  });
+});
+
 describe('scanModelCache', () => {
   it('measures a cold cache and writes the index', async () => {
     const cache = fakeCache({
@@ -146,6 +170,7 @@ describe('cache lookups', () => {
       bytes: 0,
       q8: true,
       fp16: false,
+      q4f16: false,
       verifiedAt: Date.now() - INDEX_TRUST_MS - 1,
     });
     const keyReads = cache.keys();
