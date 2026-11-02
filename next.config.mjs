@@ -20,12 +20,23 @@ const nextConfig = {
    * requiring CORP headers on every remote image the studio may show.
    */
   async headers() {
+    /**
+     * The CSP itself lives in middleware, because a nonce has to be generated
+     * per request. Everything here is static and can be answered once.
+     */
     return [
       {
         source: '/:path*',
         headers: [
           { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
           { key: 'Cross-Origin-Embedder-Policy', value: 'credentialless' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'no-referrer' },
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(), microphone=(self), geolocation=(), payment=()',
+          },
         ],
       },
     ];

@@ -30,8 +30,21 @@ export function describeError(error: unknown): string {
   return text && text !== '[object Object]' ? text : '未知错误';
 }
 
+/**
+ * A CSP that blocks WebAssembly reports itself as `Aborted(both async and sync
+ * fetching of the wasm failed)`, which is indistinguishable from a memory abort
+ * unless the text is checked first. It cost a debugging round once: the card
+ * told the user to close memory-hungry tabs when the fix was a header.
+ */
+export function looksLikePolicyBlock(message: string): boolean {
+  return /content security policy|wasm-unsafe-eval|compileerror|instantiatestreaming|fetching of the wasm failed|no available backend found/i.test(
+    message,
+  );
+}
+
 /** Errors that usually mean the tab is out of memory rather than out of luck. */
 export function looksLikeMemoryPressure(message: string): boolean {
+  if (looksLikePolicyBlock(message)) return false;
   return /out of memory|allocation|array buffer|memory access|rangeerror|aborted|oom|内存/i.test(
     message,
   );

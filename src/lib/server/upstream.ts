@@ -105,17 +105,20 @@ export function clientSignal(request: NextRequest): AbortSignal {
 /** Origin check for mutating routes; same-origin requests have no Origin header. */
 export function originAllowed(request: NextRequest): boolean {
   const origin = request.headers.get('origin');
-  if (!origin) return true;
+  // No Origin means no browser: curl and server-to-server clients omit it.
+  // Treating that as allowed is what turned these routes into an open relay
+  // for anyone who could reach the deployment.
+  if (!origin) return process.env.ALLOW_ORIGINLESS === '1';
   const allowList = (process.env.ALLOWED_ORIGINS ?? '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
-  if (allowList.length === 0) {
-    try {
-      return new URL(origin).host === request.headers.get('host');
-    } catch {
-      return false;
-    }
+  if (allowList.length > 0) return allowList.includes(origin);
+  try {
+    // Compare full origins, not Host headers: `Host` is attacker-controlled
+    // behind some proxies, while `request.nextUrl` comes from the server.
+    return new URL(origin).origin === request.nextUrl.origin;
+  } catch {
+    return false;
   }
-  return allowList.includes(origin);
 }

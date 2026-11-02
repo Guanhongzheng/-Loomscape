@@ -7,19 +7,33 @@ import {
   exceedsWeightLimit,
   findModel,
   fitsTogether,
+  poolBaseMB,
   poolBudgetMB,
   poolOf,
   poolPeakMB,
   sessionPeakMB,
+  useEngines,
   useModelRuntime,
   type Backend,
   type GpuPrecision,
   type LocalModel,
   type ModelDtype,
   type ModelSource,
+  type ResidentInfo,
 } from './engines';
 import { describeError } from './errors';
+import { residentCap, threadCap } from './scheduling';
+import { createReasoningFilter, createStopFilter, promptFor } from './local-prompts';
+import { isWeightRequest, weightFile, weightShards } from './weights';
 import {
+  acquireModelLock,
+  claimedElsewhere,
+  fitsAcrossTabs,
+  releaseAllModelLocks,
+  releaseModelLock,
+} from './tab-claims';
+import {
+  MODEL_CACHE_NAME,
   dropEntriesForRepo,
   dropEntry,
   entriesForRepo,
@@ -80,6 +94,8 @@ export function threadCount(
   isolated: boolean,
   task: 'text' | 'embedding' = 'embedding',
   sharing = false,
+  /** Scheduling profile cap; the defaults below are the balanced profile. */
+  cap = task === 'text' ? 2 : 4,
 ): number {
   if (!isolated) return 1;
   const usable = Math.max(1, Math.floor(cores) - 1);
@@ -87,9 +103,10 @@ export function threadCount(
   // session can need several gigabytes where an embedding one needs tens of
   // megabytes. Two threads is the point where the extra speed stops paying
   // for the extra memory. When a decoder is already loaded the embedder drops
-  // to the same cap: the pair has to fit one heap.
-  const cap = task === 'text' || sharing ? 2 : 4;
-  return Math.min(usable, cap);
+  // to the same cap: the pair has to fit one heap — a profile may lower this,
+  // never raise it.
+  const effective = sharing ? Math.min(cap, 2) : cap;
+  return Math.min(usable, effective);
 }
 
 export function runtimeInfo(): { cores: number; isolated: boolean; threads: number } {
@@ -163,7 +180,20 @@ type LoadOptions = {
 };
 
 const pipelines = new Map<string, Promise<unknown>>();
-const backends = new Map<string, Backend>();
+/**
+ * modelId → pipeline key. The store holds the resident *record*, but not the
+ * cache key of the promise behind it, and disposing a session means finding
+ * that exact entry; keeping the two side by side in one map avoids recomputing
+ * a key that must match character for character.
+ */
+const pipelineKeys = new Map<string, string>();
+
+/**
+ * The single source of truth for "what is loaded" is the runtime store, which
+ * the settings panel renders. A second array in this module used to be kept in
+ * sync by hand, and every failure path had one more place to forget.
+ */
+const residentsOf = () => useModelRuntime.getState().residents;
 
 /**
  * One run per session at a time. Two overlapping decodes on the same pipeline
@@ -240,25 +270,13 @@ export function recoverInterruptedLoad(): string | null {
   return model.id;
 }
 
-type Resident = {
-  modelId: string;
-  repo: string;
-  task: 'embedding' | 'text';
-  key: string;
-  backend: Backend;
-  threads: number;
-  dtype: ModelDtype;
-  peakMB: number;
-};
-
 /**
- * Loaded sessions, one per task. A decoder and an embedder can share the wasm
- * heap when the budget allows it — that is what makes local retrieval work
- * next to a local writer. A second session of the same task always evicts the
- * first, and a pair that does not fit evicts the older side.
+ * Loaded sessions live in `useModelRuntime.residents`; a decoder and an
+ * embedder can share the wasm heap when the budget allows it — that is what
+ * makes local retrieval work next to a local writer. A second session of the
+ * same task always evicts the first, and a pair that does not fit evicts the
+ * older side.
  */
-let residents: Resident[] = [];
-
 async function dispose(pipe: unknown): Promise<void> {
   const candidate = pipe as { dispose?: () => Promise<void> | void };
   try {
@@ -269,15 +287,15 @@ async function dispose(pipe: unknown): Promise<void> {
 }
 
 export function residentModelId(): string | null {
-  return residents[0]?.modelId ?? null;
+  return residentsOf()[0]?.modelId ?? null;
 }
 
 export function residentModelIds(): string[] {
-  return residents.map((row) => row.modelId);
+  return residentsOf().map((row) => row.modelId);
 }
 
 export function isResident(modelId: string): boolean {
-  return residents.some((row) => row.modelId === modelId);
+  return residentsOf().some((row) => row.modelId === modelId);
 }
 
 /**
@@ -285,11 +303,12 @@ export function isResident(modelId: string): boolean {
  * cache entries and its card state. The wasm heap itself cannot shrink, but
  * releasing the session stops it from growing with the next token.
  */
-async function release(entry: Resident): Promise<void> {
-  residents = residents.filter((row) => row.modelId !== entry.modelId);
-  backends.delete(entry.modelId);
-  const pending = pipelines.get(entry.key);
-  pipelines.delete(entry.key);
+async function release(entry: ResidentInfo): Promise<void> {
+  const key = pipelineKeys.get(entry.modelId);
+  pipelineKeys.delete(entry.modelId);
+  releaseModelLock(entry.modelId);
+  const pending = key ? pipelines.get(key) : undefined;
+  if (key) pipelines.delete(key);
 
   const store = useModelRuntime.getState();
   store.dropResident(entry.modelId);
@@ -314,15 +333,15 @@ export async function unloadModel(modelId?: string): Promise<void> {
 
 async function drop(modelId?: string): Promise<void> {
   if (modelId) {
-    const target = residents.find((row) => row.modelId === modelId);
+    const target = residentsOf().find((row) => row.modelId === modelId);
     if (target) await release(target);
     return;
   }
 
   const pending = Array.from(pipelines.values());
   pipelines.clear();
-  residents = [];
-  backends.clear();
+  pipelineKeys.clear();
+  releaseAllModelLocks();
   const store = useModelRuntime.getState();
   store.clearResident();
   Object.keys(store.models).forEach((id) => store.reset(id));
@@ -339,24 +358,19 @@ async function drop(modelId?: string): Promise<void> {
 }
 
 /**
- * Frees room for one more session. Same-task sessions go first because two
- * decoders never fit; across tasks the older one goes only when the budget
- * says the pair does not fit, so text + a small embedder normally coexist.
+ * Records a session in the store, which is the only place that answers
+ * "what is loaded". The pipeline key is parked beside it so `release` can
+ * dispose the exact promise without recomputing it.
  */
-function recordResident(next: Resident): void {
-  residents = [...residents.filter((row) => row.task !== next.task), next];
-  useModelRuntime.getState().setResident({
-    modelId: next.modelId,
-    task: next.task,
-    backend: next.backend,
-    threads: next.threads,
-    dtype: next.dtype,
-    peakMB: next.peakMB,
-  });
+function recordResident(next: ResidentInfo, key: string): void {
+  pipelineKeys.set(next.modelId, key);
+  useModelRuntime.getState().setResident(next);
 }
 
-async function makeRoom(next: Resident): Promise<void> {
-  const sameTask = residents.filter((row) => row.task === next.task && row.modelId !== next.modelId);
+async function makeRoom(next: ResidentInfo): Promise<void> {
+  const sameTask = residentsOf().filter(
+    (row) => row.task === next.task && row.modelId !== next.modelId,
+  );
   for (const row of sameTask) await release(row);
 
   // Only the pool this session will live in decides who has to go. A GPU
@@ -364,10 +378,16 @@ async function makeRoom(next: Resident): Promise<void> {
   // memory, and adding them together is what made WebGPU look unusable.
   const pool = poolOf(next.backend);
   const budget = poolBudgetMB(pool);
+  // `lean` sets the cap to one: it would rather drop the decoder than keep an
+  // embedder beside it, even when the pair still fits. Dropping is in load
+  // order, so the session that has been useful the longest is the one evicted.
+  const cap = residentCap(useEngines.getState().prefs.profile, pool);
   for (;;) {
-    const occupants = residents.filter((row) => poolOf(row.backend) === pool);
+    const occupants = residentsOf().filter((row) => poolOf(row.backend) === pool);
     if (occupants.length === 0) break;
-    if (poolPeakMB(residents, pool) + next.peakMB <= budget) break;
+    const overCap = occupants.length >= cap;
+    const overBudget = poolPeakMB(occupants, pool) + next.peakMB > budget;
+    if (!overCap && !overBudget) break;
     await release(occupants[0]);
   }
 }
@@ -420,30 +440,30 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   }
   // An embedder loaded next to a decoder gives up half its threads: the pair
   // shares one heap, and worker arenas are the part that grows with threads.
-  const sharing = model.task === 'embedding' && residents.some((row) => row.task === 'text');
+  const sharing = model.task === 'embedding' && residentsOf().some((row) => row.task === 'text');
+  const profile = useEngines.getState().prefs.profile;
   const threads = threadCount(
     runtimeInfo().cores,
     runtimeInfo().isolated,
     model.task,
     sharing,
+    threadCap(profile, model.task),
   );
   const key = `${pipelineTask(model.task)}:${model.repo}:${dtype}:${backend}:${threads}`;
-  const next: Resident = {
+  const next: ResidentInfo = {
     modelId: model.id,
-    repo: model.repo,
     task: model.task,
-    key,
     backend,
     threads,
     dtype,
-    peakMB: sessionPeakMB(model, backend, precision),
+    peakMB: sessionPeakMB(model, backend, precision, threads),
   };
 
   // A session that cannot fit its own pool used to be attempted anyway: the
   // eviction loop only ran when something else was loaded, so a too-large
   // model went straight to `Aborted()` and took the tab with it. Refusing here
   // turns that into a card that says why.
-  if (!fitsTogether([model], backend, precision)) {
+  if (!fitsTogether([model], backend, precision, { [model.task]: threads })) {
     const pool = poolOf(backend);
     const needGB = ((poolPeakMB([], pool) + next.peakMB) / 1024).toFixed(1);
     const capGB = (poolBudgetMB(pool) / 1024).toFixed(1);
@@ -459,13 +479,51 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   const wasmBackend = mod.env.backends.onnx.wasm;
   if (wasmBackend) wasmBackend.numThreads = threads;
 
-  backends.set(model.id, backend);
   if (pipelines.has(key)) {
     // Already parsed: just re-assert the record, no room keeping needed.
-    recordResident(next);
+    recordResident(next, key);
     return { pipe: await pipelines.get(key)!, backend };
   }
-  await makeRoom(next);
+
+  // Another tab already holds this model. A Web Lock is atomic, so unlike the
+  // previous record-only check it also closes the "both tabs start at once"
+  // window. The lock is released by the browser if that tab dies.
+  const pool = poolOf(backend);
+  const locked = await acquireModelLock(model.id, { pool, peakMB: next.peakMB });
+  if (!locked) {
+    const message = `${model.label} 正在另一个标签页里使用：同一个模型不能在两处驻留。先在那一边卸载，或者关掉那个标签页再试。`;
+    if (options.report) {
+      useModelRuntime.getState().set(model.id, { state: 'error', progress: 0, backend, message });
+    }
+    throw new Error(message);
+  }
+
+  // Different models still compete for the same machine. Every tab publishes
+  // what it holds; if the sum would cross this pool's ceiling, refuse before
+  // the download rather than after it.
+  const others = claimedElsewhere(pool);
+  const own = residentsOf()
+    .filter((row) => poolOf(row.backend) === pool)
+    .reduce((sum, row) => sum + row.peakMB, 0);
+  if (!fitsAcrossTabs(own, others, next.peakMB, poolBaseMB(pool), poolBudgetMB(pool))) {
+    releaseModelLock(model.id);
+    const totalGB = ((own + others + next.peakMB) / 1024).toFixed(1);
+    const capGB = (poolBudgetMB(pool) / 1024).toFixed(1);
+    const message = `其他标签页加上这一个合计约 ${totalGB}GB ${
+      pool === 'gpu' ? '显存' : 'WASM 内存'
+    }，超过本机上限 ${capGB}GB。先在另一边卸载一些模型再试。`;
+    if (options.report) {
+      useModelRuntime.getState().set(model.id, { state: 'error', progress: 0, backend, message });
+    }
+    throw new Error(message);
+  }
+
+  try {
+    await makeRoom(next);
+  } catch (error) {
+    releaseModelLock(model.id);
+    throw error;
+  }
 
   const runtimeStore = useModelRuntime.getState();
   if (options.report) runtimeStore.set(model.id, { state: 'downloading', progress: 0, backend });
@@ -542,7 +600,7 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   try {
     const pipe = await task;
     markAttempt(null);
-    recordResident(next);
+    recordResident(next, key);
 
     if (options.report) {
       runtimeStore.set(model.id, { state: 'ready', progress: 1, backend, total: 0, loaded: 0 });
@@ -551,6 +609,9 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   } catch (error) {
     pipelines.delete(key);
     markAttempt(null);
+    // Nothing is resident, so the cross-tab lock has to go with the failure;
+    // otherwise the tab blocks its own retry.
+    releaseModelLock(model.id);
     if (options.report) {
       runtimeStore.set(model.id, {
         state: 'error',
@@ -565,44 +626,6 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
 
 export async function loadModel(model: LocalModel, options: LoadOptions) {
   return loadPipeline(model, options);
-}
-
-const CACHE_NAME = 'transformers-cache';
-
-/**
- * Which weight file a dtype resolves to. transformers.js picks the same names,
- * so checking one of them is the only way to know that *this* model can run:
- * a cached config, tokenizer, or a different quantisation would otherwise be
- * reported as ready and the load would fail on a missing ONNX file.
- */
-export function weightFile(dtype: ModelDtype): string {
-  if (dtype === 'q4f16') return 'model_q4f16.onnx';
-  return dtype === 'fp16' ? 'model_fp16.onnx' : 'model_quantized.onnx';
-}
-
-export function isWeightRequest(url: string, repo: string, dtype: ModelDtype = 'q8'): boolean {
-  if (!url.includes(repo)) return false;
-  try {
-    return new URL(url).pathname.endsWith(`/${weightFile(dtype)}`);
-  } catch {
-    return false;
-  }
-}
-
-/**
- * How many cache entries belong to one precision. A split model writes the
- * graph and one `_data` file per shard, all sharing the graph's name as prefix,
- * so counting them is enough to tell a finished download from an interrupted
- * one that only got the 0.2MB graph.
- */
-export function weightShards(files: Iterable<string>, dtype: ModelDtype): number {
-  const prefix = weightFile(dtype);
-  let count = 0;
-  for (const path of files) {
-    const name = path.slice(path.lastIndexOf('/') + 1);
-    if (name === prefix || name.startsWith(`${prefix}_data`)) count += 1;
-  }
-  return count;
 }
 
 export type CacheStats = {
@@ -630,7 +653,7 @@ export async function scanModelCache(
   if (typeof caches === 'undefined') return result;
 
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(MODEL_CACHE_NAME);
     const keys = await cache.keys();
     if (keys.length === 0) {
       // A cleared browser must not be remembered as "downloaded".
@@ -719,55 +742,15 @@ function pathOf(url: string): string {
   }
 }
 
-export async function hasWeights(repo: string): Promise<boolean> {
-  if (typeof caches === 'undefined') return false;
-  // One lookup answers the common case; the fallback scan is only for a cold
-  // or expired index, which `scanModelCache` refreshes on the settings page.
-  const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
-  if (indexed) return indexed.q8 || indexed.fp16 || indexed.q4f16;
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-    return keys.some(
-      (request) =>
-        isWeightRequest(request.url, repo, 'q8') ||
-        isWeightRequest(request.url, repo, 'fp16') ||
-        isWeightRequest(request.url, repo, 'q4f16'),
-    );
-  } catch {
-    return false;
-  }
-}
-
-export async function isModelCached(
-  repo: string,
-  dtype: ModelDtype = 'q8',
-  files = 1,
-): Promise<boolean> {
-  if (typeof caches === 'undefined') return false;
-  const indexed = (await entriesForRepo(repo)).find((entry) => isFresh(entry));
-  // Recompute from the recorded file list instead of trusting the stored
-  // boolean: an interrupted split download used to look complete forever.
-  if (indexed) return weightShards(Object.keys(indexed.files), dtype) >= files;
-  try {
-    const cache = await caches.open(CACHE_NAME);
-    const keys = await cache.keys();
-    const names = keys.filter((request) => request.url.includes(repo)).map((request) => request.url);
-    return weightShards(names, dtype) >= files;
-  } catch {
-    return false;
-  }
-}
-
 export async function removeModel(repo: string): Promise<number> {
   // The release has to wait for an in-flight load of the same repo, otherwise
   // a load that lands a moment later leaves a session nobody can see.
   await serialised(async () => {
-    const holding = residents.filter((row) => row.repo === repo);
+    const holding = residentsOf().filter((row) => findModel(row.modelId)?.repo === repo);
     for (const row of holding) await release(row);
   });
   if (typeof caches === 'undefined') return 0;
-  const cache = await caches.open(CACHE_NAME);
+  const cache = await caches.open(MODEL_CACHE_NAME);
   const keys = await cache.keys();
   const hits = keys.filter((request) => request.url.includes(repo));
   await Promise.all(hits.map((request) => cache.delete(request)));
@@ -788,192 +771,6 @@ export async function embedTexts(
   const output = await exclusive(model.id, () => run(texts, { pooling, normalize: true }));
   const rows = typeof output.tolist === 'function' ? output.tolist() : output;
   return { vectors: rows as number[][], backend };
-}
-
-/**
- * Prompt construction for models that ship their own chat template. Qwen speaks
- * ChatML, so the hand-written string below is correct for it; Llama and Gemma
- * use their own special tokens, and pairing them with ChatML makes the model
- * answer and then keep going into the next turn instead of stopping at EOS.
- * The template comes from the repo's tokenizer, so a new model needs no code.
- */
-export function promptFor(
-  tokenizer: { apply_chat_template?: (messages: unknown, options?: unknown) => unknown } | undefined,
-  system: string,
-  turns: Array<{ role: string; content: string }>,
-  prefill = '',
-  useTemplate = false,
-): string {
-  if (useTemplate && typeof tokenizer?.apply_chat_template === 'function') {
-    try {
-      const text = tokenizer.apply_chat_template([{ role: 'system', content: system }, ...turns], {
-        tokenize: false,
-        add_generation_prompt: true,
-      });
-      if (typeof text === 'string' && text.length > 0) return text + prefill;
-    } catch {
-      // A repo without a usable template falls back to the ChatML string.
-    }
-  }
-  return chatPrompt(system, turns, prefill);
-}
-
-export function chatPrompt(
-  system: string,
-  turns: Array<{ role: string; content: string }>,
-  prefill = '',
-): string {
-  const blocks = [`<|im_start|>system\n${system}<|im_end|>`];
-  for (const turn of turns) {
-    blocks.push(`<|im_start|>${turn.role}\n${turn.content}<|im_end|>`);
-  }
-  blocks.push(`<|im_start|>assistant\n${prefill}`);
-  return blocks.join('\n');
-}
-
-/**
- * Only the plain-text tag is listed. Qwen3's ` thinking` / `<｜end▁of▁thinking｜>` are
- * special tokens, so the streamer already drops them with skip_special_tokens;
- * matching the bare word "think" on top of that would swallow English answers
- * that happen to open with it.
- */
-const OPENERS = ['<think>'];
-const CLOSERS = ['</think>', '<｜end▁of▁thinking｜>'];
-
-/**
- * Qwen3 is a hybrid-reasoning model: even with a closed think block in the
- * prompt it can open another one. Reasoning is model-internal and should not
- * reach the transcript, but the answer streams token by token, so the block
- * has to be dropped while it arrives rather than filtered from the result.
- */
-export function createReasoningFilter(emit: (text: string) => void) {
-  let held = '';
-  let state: 'start' | 'inside' | 'answer' = 'start';
-  const longestCloser = Math.max(...CLOSERS.map((closer) => closer.length));
-
-  const drain = () => {
-    for (;;) {
-      if (state === 'answer') {
-        if (held) {
-          emit(held);
-          held = '';
-        }
-        return;
-      }
-
-      if (state === 'start') {
-        const head = held.replace(/^\s+/, '');
-        if (!head) {
-          held = '';
-          return;
-        }
-        // Still short enough to become a tag: wait for more tokens.
-        if ([...OPENERS, ...CLOSERS].some((tag) => tag.startsWith(head))) return;
-        // A closer with no opener is the tail of the prompt's own closed block.
-        const stray = CLOSERS.find((tag) => head.startsWith(tag));
-        if (stray) {
-          state = 'answer';
-          held = head.slice(stray.length).replace(/^\s+/, '');
-          continue;
-        }
-        const opener = OPENERS.find((item) => head.startsWith(item));
-        if (!opener) {
-          state = 'answer';
-          continue;
-        }
-        state = 'inside';
-        held = head.slice(opener.length);
-        continue;
-      }
-
-      let cut = -1;
-      let closer = '';
-      for (const candidate of CLOSERS) {
-        const at = held.indexOf(candidate);
-        if (at !== -1 && (cut === -1 || at < cut)) {
-          cut = at;
-          closer = candidate;
-        }
-      }
-      if (cut === -1) {
-        // Hold back only a tail that could be the start of a closer, so a tag
-        // split across tokens never leaks into the answer.
-        if (held.length > longestCloser) held = held.slice(-longestCloser);
-        return;
-      }
-      held = held.slice(cut + closer.length).replace(/^\s+/, '');
-      state = 'answer';
-    }
-  };
-
-  return {
-    push(chunk: string) {
-      held += chunk;
-      drain();
-    },
-    /** Called once the stream ends; an unclosed block is reasoning, not answer. */
-    flush() {
-      if (state === 'answer' && held) emit(held);
-      else if (state === 'start' && held.trim()) emit(held.replace(/^\s+/, ''));
-      held = '';
-    },
-  };
-}
-
-/**
- * Turn markers that a decoder can emit as plain text when it is fed a prompt
- * built for another family, or when it starts a second turn of its own. They
- * are kept out of the transcript by cutting the stream at the first one.
- */
-const TURN_MARKERS = [
-  '<|eot_id|>',
-  '<|eom_id|>',
-  '<|end_of_text|>',
-  '<|im_end|>',
-  '<|fim_end|>',
-  '<|endoftext|>',
-  '<end_of_turn>',
-  '</s>',
-];
-
-export function createStopFilter(emit: (text: string) => void) {
-  let held = '';
-  let done = false;
-  // A marker split across tokens must not leak, so a tail that could still
-  // become one is held back until the next chunk decides it.
-  return {
-    push(chunk: string) {
-      if (done) return;
-      held += chunk;
-      let cut = -1;
-      for (const marker of TURN_MARKERS) {
-        const at = held.indexOf(marker);
-        if (at !== -1 && (cut === -1 || at < cut)) cut = at;
-      }
-      if (cut !== -1) {
-        if (cut > 0) emit(held.slice(0, cut));
-        done = true;
-        held = '';
-        return;
-      }
-      let hold = 0;
-      for (const marker of TURN_MARKERS) {
-        for (let size = Math.min(marker.length - 1, held.length); size > 0; size -= 1) {
-          if (held.endsWith(marker.slice(0, size))) hold = Math.max(hold, size);
-        }
-      }
-      const ready = held.length - hold;
-      if (ready > 0) {
-        emit(held.slice(0, ready));
-        held = held.slice(ready);
-      }
-    },
-    flush() {
-      if (!done && held) emit(held);
-      held = '';
-      done = true;
-    },
-  };
 }
 
 export async function streamLocal(options: {
@@ -1040,7 +837,6 @@ export async function streamLocal(options: {
   filter.flush();
   stop.flush();
 
-  backends.set(options.model.id, backend);
   return produced;
 }
 
@@ -1051,13 +847,14 @@ export function forgetPipeline(repo: string) {
     void entry.then(dispose).catch(() => undefined);
   });
   // Only this repo goes; a paired session of the other task stays loaded.
-  residents = residents.filter((row) => {
-    if (row.repo !== repo) return true;
-    useModelRuntime.getState().dropResident(row.modelId);
-    return false;
-  });
+  const store = useModelRuntime.getState();
+  for (const row of residentsOf().filter((item) => findModel(item.modelId)?.repo === repo)) {
+    pipelineKeys.delete(row.modelId);
+    releaseModelLock(row.modelId);
+    store.dropResident(row.modelId);
+  }
 }
 
 export function lastBackend(modelId: string): Backend | undefined {
-  return backends.get(modelId);
+  return residentsOf().find((row) => row.modelId === modelId)?.backend;
 }

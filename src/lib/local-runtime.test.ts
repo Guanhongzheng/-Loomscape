@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  recoverInterruptedLoad,
+  runtimeInfo,
+  threadCount,
+} from '@/lib/local-runtime';
+import {
   chatPrompt,
   createReasoningFilter,
   createStopFilter,
   promptFor,
-  isWeightRequest,
-  recoverInterruptedLoad,
-  runtimeInfo,
-  threadCount,
-  weightFile,
-} from '@/lib/local-runtime';
+} from '@/lib/local-prompts';
+import { isWeightRequest, weightFile } from '@/lib/weights';
 import { LOCAL_EMBEDDINGS, LOCAL_TEXT, dtypeFor, sizeFor, useModelRuntime } from '@/lib/engines';
 
 describe('threadCount', () => {
@@ -46,6 +47,15 @@ describe('threadCount', () => {
     expect(threadCount(16, true, 'embedding', true)).toBe(2);
     // The paired cap only lowers the ceiling; a two-core machine stays at one.
     expect(threadCount(2, true, 'embedding', true)).toBe(1);
+  });
+
+  it('honours a scheduling profile cap in both directions', () => {
+    // `lean` asks for one thread, `throughput` for four; the core count still
+    // wins when it is lower, and the shared-heap rule still caps at two.
+    expect(threadCount(16, true, 'text', false, 1)).toBe(1);
+    expect(threadCount(16, true, 'text', false, 4)).toBe(4);
+    expect(threadCount(3, true, 'text', false, 4)).toBe(2);
+    expect(threadCount(16, true, 'embedding', true, 4)).toBe(2);
   });
 });
 

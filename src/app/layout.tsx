@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { Toaster } from '@/components/ui/toast';
+import { ServiceWorker } from '@/components/service-worker';
+import { MotionProvider } from '@/components/motion-provider';
 
 export const metadata: Metadata = {
   title: {
@@ -12,6 +14,7 @@ export const metadata: Metadata = {
   applicationName: 'Loomscape',
   authors: [{ name: 'Loomscape' }],
   keywords: ['创意工具', '工作台', '文本', '图像', '声音', '影像', 'Loomscape'],
+  manifest: '/manifest.webmanifest',
   openGraph: {
     title: '织境 Loomscape',
     description: '把散落的材料，织成一件作品。',
@@ -25,12 +28,23 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+/**
+ * Every route renders per request. The CSP nonce is generated in middleware,
+ * and a page built at build time would ship scripts without it — the browser
+ * would then refuse to run them. This is the price of dropping
+ * `'unsafe-inline'` from `script-src`.
+ */
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
       <body className="min-h-[100dvh] font-sans antialiased">
-        {children}
-        <Toaster />
+        <MotionProvider>
+          {children}
+          <Toaster />
+        </MotionProvider>
+        <ServiceWorker />
       </body>
     </html>
   );

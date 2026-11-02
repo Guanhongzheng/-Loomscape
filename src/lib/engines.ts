@@ -2,6 +2,13 @@
 
 import { create } from 'zustand';
 import { getPref, setPref } from './db';
+import {
+  GPU_CEILING_MB,
+  WASM_CEILING_MB,
+  budgetsFor,
+  type PoolBudgets,
+} from './budget';
+import { DEFAULT_PROFILE, isProfile, type SchedulingProfile } from './scheduling';
 
 export type EngineTask = 'embedding' | 'text';
 export type ModelSource = 'modelscope' | 'huggingface';
@@ -293,6 +300,8 @@ export type EnginePrefs = {
   backend: 'auto' | Backend;
   /** Only meaningful on WebGPU; WASM always runs int8. */
   gpuPrecision: GpuPrecision;
+  /** Thread caps and coexistence policy; see lib/scheduling.ts. */
+  profile: SchedulingProfile;
 };
 
 export const DEFAULT_ENGINE_PREFS: EnginePrefs = {
@@ -303,6 +312,7 @@ export const DEFAULT_ENGINE_PREFS: EnginePrefs = {
   source: 'modelscope',
   backend: 'auto',
   gpuPrecision: 'fp16',
+  profile: DEFAULT_PROFILE,
 };
 
 /**
@@ -327,6 +337,7 @@ export function normalisePrefs(stored?: Partial<EnginePrefs> | null): EnginePref
   if (merged.source !== 'modelscope' && merged.source !== 'huggingface') {
     merged.source = 'modelscope';
   }
+  if (!isProfile(merged.profile)) merged.profile = DEFAULT_PROFILE;
   return merged;
 }
 
@@ -405,19 +416,38 @@ export const POOL_LABEL: Record<ResidentPool, string> = {
   gpu: '显存',
 };
 
-/** wasm32 linear memory is 4GB; the page itself needs the remainder. */
-export const WASM_BUDGET_MB = 3400;
-/**
- * Standing in for VRAM, which the platform does not report. Discrete cards have
- * far more, integrated ones share system memory, so this is a ceiling rather
- * than a measurement: it is high enough to hold a decoder plus an embedder and
- * low enough to catch a stack that would spill out of a 16GB machine.
- */
-export const GPU_BUDGET_MB = 6144;
 /** ORT runtime, tokenizers and the JS side, charged to the wasm pool once. */
 export const RUNTIME_BASE_MB = 600;
 /** Buffers, staging copies and the command encoder, charged to the gpu pool once. */
 export const GPU_BASE_MB = 256;
+
+/**
+ * Budgets are resolved once from `navigator.deviceMemory` (see lib/budget.ts)
+ * and then cached, because every call site asks the same question many times
+ * per render. `configureBudgets` exists for tests and for a future "override"
+ * setting; without it the first read wins.
+ */
+let cachedBudgets: PoolBudgets | null = null;
+
+export function configureBudgets(deviceMemoryGB?: number): PoolBudgets {
+  cachedBudgets = budgetsFor(deviceMemoryGB);
+  return cachedBudgets;
+}
+
+export function currentBudgets(): PoolBudgets {
+  if (!cachedBudgets) {
+    const memory =
+      typeof navigator !== 'undefined'
+        ? (navigator as unknown as { deviceMemory?: number }).deviceMemory
+        : undefined;
+    cachedBudgets = budgetsFor(memory);
+  }
+  return cachedBudgets;
+}
+
+/** Kept for the tests that assert a hard ceiling; the live value is dynamic. */
+export const WASM_BUDGET_MB = WASM_CEILING_MB;
+export const GPU_BUDGET_MB = GPU_CEILING_MB;
 
 /**
  * Peak footprint of one session inside its pool.
@@ -437,16 +467,36 @@ function peakForDtype(model: LocalModel, dtype: ModelDtype): number {
   return dtype === 'q8' ? Math.round(weights * 3) : Math.round(weights * 1.15 + 128);
 }
 
+/**
+ * Per-worker scratch. ORT hands every wasm thread its own arena, so a
+ * four-thread decoder costs more than a two-thread one even with identical
+ * weights — a fact the peak formula used to ignore, which is why switching to
+ * `throughput` could overshoot the budget.
+ *
+ * 48MB is a conservative estimate, not a measurement: it has not been checked
+ * against a real four-thread decode.
+ */
+export const THREAD_ARENA_MB = 48;
+/** Embedders hold only activations per thread, so their arena is smaller. */
+export const EMBED_THREAD_ARENA_MB = 16;
+
+function arenaMB(task: EngineTask, threads: number): number {
+  if (!Number.isFinite(threads) || threads <= 0) return 0;
+  return Math.round(threads) * (task === 'text' ? THREAD_ARENA_MB : EMBED_THREAD_ARENA_MB);
+}
+
 export function sessionPeakMB(
   model: LocalModel,
   backend: 'auto' | Backend,
   precision: GpuPrecision = 'fp16',
+  threads = 0,
 ): number {
-  return peakForDtype(model, dtypeFor(model, backend, precision));
+  return peakForDtype(model, dtypeFor(model, backend, precision)) + arenaMB(model.task, threads);
 }
 
 export function poolBudgetMB(pool: ResidentPool): number {
-  return pool === 'gpu' ? GPU_BUDGET_MB : WASM_BUDGET_MB;
+  const budgets = currentBudgets();
+  return pool === 'gpu' ? budgets.gpu : budgets.wasm;
 }
 
 export function poolBaseMB(pool: ResidentPool): number {
@@ -477,9 +527,12 @@ export function fitsTogether(
   models: LocalModel[],
   backend: Backend,
   precision: GpuPrecision = 'fp16',
+  threadsByTask: Partial<Record<EngineTask, number>> = {},
 ): boolean {
   const load: Record<ResidentPool, number> = { wasm: 0, gpu: 0 };
-  for (const model of models) load[poolOf(backend)] += sessionPeakMB(model, backend, precision);
+  for (const model of models) {
+    load[poolOf(backend)] += sessionPeakMB(model, backend, precision, threadsByTask[model.task]);
+  }
   return (['wasm', 'gpu'] as ResidentPool[]).every(
     (pool) => load[pool] === 0 || poolBaseMB(pool) + load[pool] <= poolBudgetMB(pool),
   );
@@ -496,13 +549,15 @@ export function roomFor(
   model: LocalModel,
   backend: Backend,
   precision: GpuPrecision = 'fp16',
+  threads = 0,
 ): boolean {
   const pool = poolOf(backend);
   const occupied = residents
     .filter((row) => poolOf(row.backend) === pool && row.task !== model.task)
     .reduce((sum, row) => sum + row.peakMB, 0);
   return (
-    poolBaseMB(pool) + occupied + sessionPeakMB(model, backend, precision) <= poolBudgetMB(pool)
+    poolBaseMB(pool) + occupied + sessionPeakMB(model, backend, precision, threads) <=
+    poolBudgetMB(pool)
   );
 }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { STORES, all, put } from './db';
+import { isSealed, openSecret, sealSecret } from './vault';
 
 export type Channel = 'text' | 'image' | 'speech' | 'embedding';
 
@@ -22,6 +23,8 @@ export type Endpoint = {
   model: string;
   shape: WireShape;
   updatedAt: number;
+  /** The stored key is encrypted and the vault is locked; never persisted. */
+  sealed?: boolean;
 };
 
 type Preset = {
@@ -200,15 +203,20 @@ export async function loadEndpoints(): Promise<Record<Channel, Endpoint>> {
   const result = { ...EMPTY_ENDPOINTS };
   try {
     const rows = await all<Endpoint>(STORES.providers);
-    rows.forEach((row) => {
-      if (!row.channel) return;
+    for (const row of rows) {
+      if (!row.channel) continue;
       const merged = { ...EMPTY_ENDPOINTS[row.channel], ...row };
       // keep the preset address when a stored row was saved before a provider was chosen
       if (!merged.baseUrl.trim()) {
         merged.baseUrl = presetFor(row.channel, merged.preset)?.baseUrl ?? '';
       }
+      // A sealed key needs the passphrase; while locked it reads as empty, and
+      // the settings card says why instead of pretending nothing was saved.
+      const sealed = isSealed(merged.apiKey ?? '');
+      merged.apiKey = await openSecret(merged.apiKey ?? '');
+      merged.sealed = sealed && merged.apiKey === '';
       result[row.channel] = merged;
-    });
+    }
   } catch {
     // storage unavailable — defaults already represent the offline state
   }
@@ -225,7 +233,9 @@ export async function saveEndpoint(endpoint: Endpoint): Promise<void> {
   await put(STORES.providers, {
     ...endpoint,
     baseUrl: endpoint.baseUrl.trim(),
-    apiKey: endpoint.apiKey.trim(),
+    // Sealed when the vault is on; throws while it is locked, so a save can
+    // never silently downgrade the stored key to plaintext.
+    apiKey: await sealSecret(endpoint.apiKey.trim()),
     model: endpoint.model.trim(),
     updatedAt: Date.now(),
   });

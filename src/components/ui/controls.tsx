@@ -1,8 +1,9 @@
 'use client';
 
-import { useId } from 'react';
+import { useId, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/cn';
+import { nextTabIndex } from '@/lib/roving';
 
 export function Segmented<T extends string>({
   value,
@@ -18,21 +19,35 @@ export function Segmented<T extends string>({
   size?: 'sm' | 'md';
 }) {
   const id = useId();
-
+  const buttons = useRef<Array<HTMLButtonElement | null>>([]);
   return (
     <div
       role="tablist"
+      aria-orientation="horizontal"
       className={cn('neu-inset-sm inline-flex rounded-full p-1', className)}
     >
-      {options.map((option) => {
+      {options.map((option, index) => {
         const active = option.value === value;
         return (
           <button
             key={option.value}
+            ref={(node) => {
+              buttons.current[index] = node;
+            }}
             role="tab"
             aria-selected={active}
+            // Roving tabindex: the group is one stop in the tab order, and the
+            // arrow keys move inside it.
+            tabIndex={active ? 0 : -1}
             type="button"
             onClick={() => onChange(option.value)}
+            onKeyDown={(event) => {
+              const next = nextTabIndex(index, options.length, event.key);
+              if (next === index) return;
+              event.preventDefault();
+              buttons.current[next]?.focus();
+              onChange(options[next].value);
+            }}
             className={cn(
               'relative rounded-full font-medium transition-colors duration-300',
               size === 'sm' ? 'h-7 px-3 text-[11.5px]' : 'h-8 px-4 text-[12.5px]',

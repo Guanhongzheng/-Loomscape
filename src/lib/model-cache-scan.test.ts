@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { INDEX_TRUST_MS, dropEntry, resetCacheConnection, saveEntry } from '@/lib/model-cache';
-import { hasWeights, isModelCached, removeModel, scanModelCache } from '@/lib/local-runtime';
+import { removeModel, scanModelCache } from '@/lib/local-runtime';
+import { hasWeights, isModelCached } from '@/lib/cache-status';
 
 const REPO = 'onnx-community/Qwen3-0.6B-ONNX';
 const at = (file: string) =>
@@ -77,6 +78,28 @@ describe('sharded weights', () => {
     expect(rows['qwen3-0.6b'].q8).toBe(true);
     expect(rows['qwen3-0.6b'].bytes).toBe(520_200_000);
     expect(await isModelCached(REPO, 'q8', 2)).toBe(true);
+  });
+
+  it('rejects a shard set whose bytes fall short of the catalogue', async () => {
+    fakeCache({
+      [at('model_quantized.onnx')]: 200_000,
+      [at('model_quantized.onnx_data')]: 520_000_000,
+    });
+    await scanModelCache(split);
+    // 520MB of 1200MB: every shard is present, the bytes say it stopped early.
+    expect(await isModelCached(REPO, 'q8', 2, 1200)).toBe(false);
+    expect(await isModelCached(REPO, 'q8', 2, 550)).toBe(true);
+  });
+
+  it('falls back to the file count when no size is known', async () => {
+    // Responses without content-length land in the index as 0; refusing them
+    // would make a perfectly good cache look empty on those hosts.
+    fakeCache({
+      [at('model_quantized.onnx')]: 0,
+      [at('model_quantized.onnx_data')]: 0,
+    });
+    await scanModelCache(split);
+    expect(await isModelCached(REPO, 'q8', 2, 1200)).toBe(true);
   });
 });
 

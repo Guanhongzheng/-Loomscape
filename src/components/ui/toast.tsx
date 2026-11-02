@@ -38,7 +38,14 @@ export function Toaster() {
   const items = useToasts((state) => state.items);
 
   return (
-    <div className="pointer-events-none fixed bottom-7 left-1/2 z-[120] flex -translate-x-1/2 flex-col items-center gap-2">
+    <div
+      // Toasts are the only feedback for most actions; without a live region
+      // a screen reader never learns that the save succeeded or failed.
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      className="pointer-events-none fixed bottom-7 left-1/2 z-[120] flex -translate-x-1/2 flex-col items-center gap-2"
+    >
       <AnimatePresence>
         {items.map((item) => {
           const Icon = icons[item.tone];

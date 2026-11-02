@@ -54,4 +54,17 @@ describe('looksLikeMemoryPressure', () => {
     expect(looksLikeMemoryPressure('Failed to fetch')).toBe(false);
     expect(looksLikeMemoryPressure('Unexpected token < in JSON')).toBe(false);
   });
+
+  it('does not read a blocked wasm compile as memory pressure', () => {
+    // The CSP failure arrives as "Aborted(...)" too, and pointing the user at
+    // memory sent one debugging round in the wrong direction.
+    const blocked =
+      'no available backend found. ERR: [wasm] RuntimeError: Aborted(both async and sync fetching of the wasm failed)';
+    expect(looksLikeMemoryPressure(blocked)).toBe(false);
+    expect(
+      looksLikeMemoryPressure(
+        "CompileError: WebAssembly.instantiateStreaming(): violates ... Content Security Policy ... 'wasm-unsafe-eval'",
+      ),
+    ).toBe(false);
+  });
 });

@@ -22,10 +22,10 @@ import {
 import { describeError } from '@/lib/errors';
 import {
   detectBackend,
-  isModelCached,
   isResident,
   loadModel,
 } from '@/lib/local-runtime';
+import { isModelCached } from '@/lib/cache-status';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import { Wordmark } from '@/components/brand';
@@ -146,8 +146,15 @@ export function StudioShell({
           continue;
         }
         const dtype = dtypeFor(candidate, backend, prefs.gpuPrecision);
-        // Split models need every shard on disk, not just the graph file.
-        if (!(await isModelCached(candidate.repo, dtype, splitOf(candidate, dtype).files))) {
+        // Every shard on disk, and enough bytes to be a finished shard rather
+        // than a truncated one — a partial write used to look loadable.
+        const cached = await isModelCached(
+          candidate.repo,
+          dtype,
+          splitOf(candidate, dtype).files,
+          candidate.sizesMB[dtype],
+        );
+        if (!cached) {
           continue;
         }
 

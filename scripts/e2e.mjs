@@ -108,6 +108,17 @@ async function run() {
       home.headers.get('cross-origin-embedder-policy') === 'credentialless',
     `coop=${home.headers.get('cross-origin-opener-policy')} coep=${home.headers.get('cross-origin-embedder-policy')}`,
   );
+  // Without 'wasm-unsafe-eval' every local model dies at instantiation with
+  // "both async and sync fetching of the wasm failed". No page-level test
+  // catches it, because nothing here downloads weights.
+  const csp = home.headers.get('content-security-policy') ?? '';
+  check('CSP 允许 wasm 编译', csp.includes("'wasm-unsafe-eval'"), csp.slice(0, 120));
+  const scriptSrc = (csp.match(/script-src ([^;]+)/) ?? [])[1] ?? '';
+  check(
+    'CSP 使用 nonce 且脚本无 unsafe-inline',
+    /'nonce-[^']+'/.test(scriptSrc) && !/'unsafe-inline'/.test(scriptSrc),
+    scriptSrc.slice(0, 110),
+  );
 
   const browser = await launch();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -207,6 +218,20 @@ async function run() {
   const textRow = Array.isArray(stored) ? stored.find((row) => row.channel === 'text') : null;
   check('端点写入 IndexedDB 且以 channel 为键', Boolean(textRow), JSON.stringify(stored));
   check('记录不再依赖不存在的 id', textRow ? !textRow.hasId : false);
+
+  // The segmented controls are the only way to switch engine, retrieval and
+  // scheduling; mouse-only would strand anyone driving by keyboard.
+  const scheduleTabs = page.locator('#scheduling [role="tablist"]');
+  await scheduleTabs.locator('[role="tab"]').first().focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(250);
+  const afterRight = await scheduleTabs
+    .locator('[role="tab"]')
+    .evaluateAll((nodes) => nodes.findIndex((node) => node.getAttribute('aria-selected') === 'true'));
+  check('分段控件支持方向键', afterRight === 1, `index=${afterRight}`);
+  // Put the profile back so later steps start from 均衡.
+  await page.keyboard.press('ArrowLeft');
+  await page.waitForTimeout(200);
 
   const dataError = errors.some((line) => /DataError|key path/i.test(line));
   check('保存过程没有 DataError', !dataError, errors.find((line) => /DataError/i.test(line)) ?? '');
@@ -320,6 +345,16 @@ async function run() {
   check('来源列表可见', chat.sources);
   check('未配置模型时标注 retrieval only', chat.mode);
   await rag.screenshot({ path: path.join(shots, '03-chat.png'), fullPage: false });
+
+  // The transcript used to live only in React state, so a reload lost it.
+  await rag.reload({ waitUntil: 'domcontentloaded' });
+  await rag.waitForTimeout(2200);
+  const kept = await rag.evaluate(() => ({
+    text: document.querySelector('main .overflow-y-auto')?.textContent ?? '',
+    sessions: document.querySelectorAll('ul li[data-session]').length,
+  }));
+  check('刷新后对话仍在', kept.text.includes('旧书店几点关门？'), `len=${kept.text.length}`);
+  check('会话列表保留一条', kept.sessions === 1, `rows=${kept.sessions}`);
 
   // Re-creating a guest must work. The users store has a unique index on
   // `email`; guests used to be written with email: '', so the second guest hit

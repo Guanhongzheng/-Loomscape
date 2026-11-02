@@ -22,8 +22,10 @@
  * precision?" from a full cache scan into one lookup.
  */
 
-export type ModelCacheEntry = {
-  /** Model id from the catalogue. */
+/** Cache Storage bucket that transformers.js writes weight bytes into. */
+export const MODEL_CACHE_NAME = 'transformers-cache';
+
+export type ModelCacheEntry = {  /** Model id from the catalogue. */
   id: string;
   repo: string;
   /** Cached URL path → byte size. 0 means the response had no content-length. */

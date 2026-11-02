@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   ALL_LOCAL_MODELS,
   DEFAULT_ENGINE_PREFS,
+  EMBED_THREAD_ARENA_MB,
   GPU_BASE_MB,
   LOCAL_EMBEDDINGS,
   LOCAL_TEXT,
   RETIRED_MODELS,
   RUNTIME_BASE_MB,
+  THREAD_ARENA_MB,
   WASM_BUDGET_MB,
   MAX_FILE_MB,
   MAX_SHARD_MB,
@@ -248,6 +250,29 @@ describe('memory budget', () => {
 
   it('lets a same-task load replace a session instead of counting both', () => {
     expect(roomFor([row(m3, 'wasm')], m3, 'wasm')).toBe(true);
+  });
+
+  it('charges one arena per worker, so threads raise the peak', () => {
+    // The formula used to be blind to threads: `throughput` asked for four
+    // instead of two and the estimate did not move.
+    const two = sessionPeakMB(text, 'wasm', 'fp16', 2);
+    const four = sessionPeakMB(text, 'wasm', 'fp16', 4);
+    expect(four - two).toBe(THREAD_ARENA_MB * 2);
+
+    // An embedder's arena is smaller, and no threads means no charge.
+    expect(sessionPeakMB(base, 'wasm', 'fp16', 4) - sessionPeakMB(base, 'wasm', 'fp16', 0)).toBe(
+      EMBED_THREAD_ARENA_MB * 4,
+    );
+    expect(sessionPeakMB(text, 'wasm')).toBe(sessionPeakMB(text, 'wasm', 'fp16', 0));
+  });
+
+  it('refuses a load once its own arenas no longer fit', () => {
+    expect(fitsTogether([text], 'wasm', 'fp16', { text: 2 })).toBe(true);
+    // 40 threads is unrealistic; it proves the argument reaches the decision
+    // instead of being silently dropped.
+    expect(fitsTogether([text], 'wasm', 'fp16', { text: 40 })).toBe(false);
+    expect(roomFor([], text, 'wasm', 'fp16', 0)).toBe(true);
+    expect(roomFor([], text, 'wasm', 'fp16', 40)).toBe(false);
   });
 });
 

@@ -3,7 +3,8 @@
 import { STORES, all, getPref, put, remove, setPref } from './db';
 import { opaqueId } from './id';
 import { findModel, useEngines } from './engines';
-import { embedTexts, hasWeights, isResident } from './local-runtime';
+import { embedTexts, isResident } from './local-runtime';
+import { hasWeights } from './cache-status';
 import { requestEmbeddings } from './api';
 import { useEndpoints } from './endpoint-store';
 import { hasKey } from './providers';

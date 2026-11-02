@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { STORES, all, get, resetConnection } from '@/lib/db';
+import { newChatId, saveChat } from '@/lib/chats';
 import { saveEndpoint, type Endpoint } from '@/lib/providers';
 
 const DB_NAME = 'loomscape';
@@ -60,6 +61,20 @@ describe('v1 to v2 migration', () => {
 
     const row = await get<Endpoint>(STORES.providers, 'text');
     expect(row?.apiKey).toBe('sk-migrated-key-1234');
+  });
+
+  it('adds the chats store so an older database can keep transcripts', async () => {
+    await seedV1();
+
+    // Opening runs the upgrade; v3 creates the store, so a database that
+    // predates chat history still accepts one.
+    expect(await all(STORES.chats)).toEqual([]);
+    const saved = await saveChat({
+      id: newChatId(),
+      owner: 'usr_1',
+      turns: [{ id: 'turn_1', role: 'user', text: '旧库里的第一条', at: 1 }],
+    });
+    expect(saved?.title).toBe('旧库里的第一条');
   });
 
   it('keeps unrelated stores intact', async () => {

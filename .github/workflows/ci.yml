@@ -28,10 +28,9 @@ jobs:
 
   e2e:
     name: playwright
-    # Manual only for now: it downloads a browser and asserts on layout, which
-    # has only been run on Windows so far. Once it is green on Linux, drop the
-    # condition and let pull requests run it.
-    if: github.event_name == 'workflow_dispatch'
+    # Runs on every PR now. The script picks whichever browser exists (Edge,
+    # Chrome, then the bundled Chromium), so the same run works on a laptop and
+    # on this runner; Linux only ever takes the last branch.
     runs-on: ubuntu-latest
     needs: verify
     steps:
@@ -43,7 +42,7 @@ jobs:
       - run: npm ci
       # The app drives playwright-core, which ships no browsers; the CLI of the
       # same version installs the build it expects to find.
-      - run: npx --yes playwright@1.49.1 install --with-deps chromium
+      - run: npx --yes playwright@1.64.1 install --with-deps chromium
       - run: npm run build
       - run: npm run test:e2e
       - if: always()

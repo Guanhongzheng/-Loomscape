@@ -1,25 +1,10 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChat } from '@ai-sdk/react';
 import type { Message } from 'ai';
-import {
-  ArrowUp,
-  BookPlus,
-  Database,
-  FileText,
-  Loader2,
-  Sparkle,
-  Square,
-  Trash2,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input, Textarea } from '@/components/ui/field';
-import { Switch } from '@/components/ui/controls';
-import { ChannelBadge, EmptyState, Panel, WorkbenchHeader } from '@/components/studio/workbench';
-import { RichText } from '@/components/studio/rich-text';
-import { ToolBadges, textOf } from '@/components/studio/chat-parts';
+import { ChannelBadge, Panel, WorkbenchHeader } from '@/components/studio/workbench';
+import { textOf } from '@/components/studio/chat-parts';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
@@ -38,129 +23,32 @@ import {
   type EmbedderInfo,
   type RecallHit,
 } from '@/lib/memory';
-import { composeRagContext, systemPrompt as buildSystem, usedCitations } from '@/lib/rag';
-import { solveArithmetic } from '@/lib/arithmetic';
-import { cn } from '@/lib/cn';
-
-type ChatMode = 'cloud' | 'local' | 'retrieval' | 'calc';
-
-type Turn = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  at: number;
-  mode?: ChatMode;
-  sources?: RecallHit[];
-  tools?: Message;
-};
-
-const SUGGESTIONS = [
-  '把这批资料整理成三条要点',
-  '用我已经写过的语气，写一段开场',
-  '知识库里关于光线的描述有哪些？',
-];
-
-function sourceLabel(hit: RecallHit): string {
-  return hit.record.source ? `《${hit.record.source.docTitle}》` : '记忆';
-}
-
-/**
- * Sources the answer actually cited stay dark; the rest fade back, so a
- * retrieval hit that the model ignored is visible as such.
- */
-function SourceList({ text, sources }: { text: string; sources: RecallHit[] }) {
-  const cited = new Set(usedCitations(text, sources.length));
-  return (
-    <ol className="space-y-1">
-      {sources.map((hit, index) => {
-        const used = cited.has(index + 1);
-        return (
-          <li
-            key={hit.record.id}
-            className={cn(
-              'flex gap-2 text-[11px] leading-relaxed',
-              used ? 'text-muted' : 'text-muted/55',
-            )}
-          >
-            <span
-              className={cn(
-                'mt-px shrink-0 font-mono text-[10px]',
-                used ? 'text-[rgb(var(--copper))]' : 'text-muted/40',
-              )}
-            >
-              [{index + 1}]
-            </span>
-            <span className="min-w-0">
-              <span className={used ? 'text-ink/75' : 'text-ink/45'}>{sourceLabel(hit)}</span>
-              <span className="ml-1.5">
-                {hit.record.text.replace(/\s+/g, ' ').slice(0, 54)}…
-              </span>
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-function retrievalAnswer(hits: RecallHit[]): string {
-  if (!hits.length) {
-    return '本地知识库里没有找到相关片段。可以在右侧导入资料，或先在设置里连接一个模型端点。';
-  }
-  const lines = hits.map((hit, index) => {
-    const position = hit.record.source
-      ? ` 片段 ${hit.record.source.chunk + 1}/${hit.record.source.total}`
-      : '';
-    return `[${index + 1}] ${sourceLabel(hit)}${position}\n${hit.record.text.slice(0, 220)}`;
-  });
-  return ['未配置模型，先给出检索结果（按相关度排序）：', ...lines].join('\n\n');
-}
-
-/**
- * Turns the SDK transcript into one bubble per exchange. With tools enabled a
- * single answer arrives as several assistant messages (text, tool call, text);
- * rendering each as its own bubble looked like the reply repeated itself.
- */
-function cloudTurns(messages: Message[], sources: Map<number, RecallHit[]>): Turn[] {
-  const out: Turn[] = [];
-  let asked = 0;
-
-  for (const message of messages) {
-    const text = textOf(message).trim();
-    const isTool = (message.parts ?? []).some((part) => part.type === 'tool-invocation');
-
-    if (message.role !== 'assistant') {
-      asked += 1;
-      out.push({
-        id: message.id,
-        role: 'user',
-        text,
-        at: (message.createdAt ?? new Date()).getTime(),
-      });
-      continue;
-    }
-
-    const previous = out[out.length - 1];
-    if (previous && previous.role === 'assistant') {
-      if (text) previous.text = previous.text ? `${previous.text}\n\n${text}` : text;
-      previous.tools = message;
-      continue;
-    }
-
-    if (!text && !isTool) continue;
-
-    out.push({
-      id: message.id,
-      role: 'assistant',
-      text,
-      at: (message.createdAt ?? new Date()).getTime(),
-      tools: message,
-      sources: sources.get(asked - 1),
-    });
-  }
-
-  return out;
-}
+import { composeRagContext, systemPrompt as buildSystem } from '@/lib/rag';
+import {
+  deleteChat,
+  listChats,
+  loadChat,
+  newChatId,
+  saveChat,
+  type ChatSession,
+  type ChatSummary,
+  type ChatTurn,
+} from '@/lib/chats';
+import { KnowledgePanel } from './knowledge-panel';
+import { Transcript } from './transcript';
+import { calcTurns, exchange, localHistory } from './turns';
+import { Composer } from './composer';
+import { RetrievalPanel } from './retrieval-panel';
+import {
+  ChatSessionPanel,
+  SUGGESTIONS,
+  SourceList,
+  cloudTurns,
+  retrievalAnswer,
+  sourcesOf,
+  timeAgo,
+  type Turn,
+} from './parts';
 
 export default function ChatWorkbench() {
   const { user } = useAuth();
@@ -181,8 +69,18 @@ export default function ChatWorkbench() {
   const [note, setNote] = useState('');
   const [importing, setImporting] = useState(false);
   const [cloudSources, setCloudSources] = useState<Map<number, RecallHit[]>>(new Map());
+  const [sessions, setSessions] = useState<ChatSummary[]>([]);
+  // A fresh id from the first paint: a message sent before the history loads
+  // still has somewhere to go, instead of being written under an empty id.
+  const [activeId, setActiveId] = useState(() => newChatId());
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
 
   const abortRef = useRef<AbortController | null>(null);
+  // A title typed by the person survives later saves; an empty one means
+  // "derive from the first question".
+  const customTitle = useRef('');
+  const turnsRef = useRef<Turn[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pendingContext = useRef('');
   // Retrieval is awaited before the transcript updates, so a fast double Enter
@@ -231,6 +129,134 @@ export default function ChatWorkbench() {
 
   useEffect(refreshDocs, [user]);
 
+  const applySession = useCallback(
+    (session: ChatSession) => {
+      abortRef.current?.abort();
+      stop();
+      setLocalBusy(false);
+      setActiveId(session.id);
+      customTitle.current = session.title;
+      setEditingTitle(false);
+      remembered.current.clear();
+      setCloudSources(sourcesOf(session.turns));
+
+      // Cloud transcripts have to go back through useChat: it is what holds
+      // the history the next request sends. Local ones live in this component.
+      if (session.turns.some((turn) => turn.mode === 'cloud')) {
+        setLocalTurns([]);
+        setMessages(
+          session.turns.map((turn) => ({
+            id: turn.id,
+            role: turn.role,
+            content: turn.text,
+            createdAt: new Date(turn.at),
+          })),
+        );
+      } else {
+        setMessages([]);
+        setLocalTurns(session.turns);
+      }
+    },
+    [setMessages, stop],
+  );
+
+  const persist = useCallback(
+    async (rows: Turn[]) => {
+      if (rows.length === 0) return;
+      const stored: ChatTurn[] = rows.map((turn) => ({
+        id: turn.id,
+        role: turn.role,
+        text: turn.text,
+        at: turn.at,
+        mode: turn.mode,
+        sources: turn.sources,
+      }));
+      try {
+        const saved = await saveChat({
+          id: activeId,
+          owner,
+          title: customTitle.current,
+          turns: stored,
+        });
+        if (saved) customTitle.current = saved.title;
+        setSessions(await listChats(owner));
+      } catch {
+        // A blocked or full store must not break the transcript in front of
+        // the person: the tab still holds it, it just will not survive reload.
+      }
+    },
+    [activeId, owner],
+  );
+
+  async function startNew() {
+    // Await the save: `persist` writes the derived title back into
+    // `customTitle`, and letting that land after the reset below would give the
+    // new session the old one's name.
+    await persist(turnsRef.current);
+    abortRef.current?.abort();
+    stop();
+    setLocalBusy(false);
+    setMessages([]);
+    setLocalTurns([]);
+    setCloudSources(new Map());
+    remembered.current.clear();
+    customTitle.current = '';
+    setEditingTitle(false);
+    setActiveId(newChatId());
+  }
+
+  async function openChat(id: string) {
+    if (id === activeId) return;
+    await persist(turnsRef.current);
+    const session = await loadChat(id);
+    if (session) applySession(session);
+  }
+
+  async function dropChat(id: string) {
+    await deleteChat(id);
+    const rows = await listChats(owner);
+    setSessions(rows);
+    toast('已删除会话', 'success');
+    if (id !== activeId) return;
+
+    // Move to the next session before clearing, so the save effect cannot
+    // write the old turns back under the id that was just deleted.
+    const next = rows.length > 0 ? await loadChat(rows[0].id) : null;
+    if (next) {
+      applySession(next);
+    } else {
+      setActiveId(newChatId());
+      setMessages([]);
+      setLocalTurns([]);
+      setCloudSources(new Map());
+      remembered.current.clear();
+      customTitle.current = '';
+    }
+  }
+
+  const commitRename = () => {
+    const next = titleDraft.trim();
+    setEditingTitle(false);
+    if (!next) return;
+    customTitle.current = next;
+    void persist(turnsRef.current);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const rows = await listChats(owner);
+      if (cancelled) return;
+      setSessions(rows);
+      if (rows.length === 0) return;
+      const session = await loadChat(rows[0].id);
+      if (!cancelled && session) applySession(session);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [owner, applySession]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length, localTurns.length]);
@@ -261,20 +287,9 @@ export default function ChatWorkbench() {
     // as 10.3 often enough that arithmetic is answered here, while everything
     // else still goes to the model.
     if (localMode) {
-      const calc = solveArithmetic(text);
+      const calc = calcTurns(text);
       if (calc) {
-        const id = `calc_${Date.now()}`;
-        setLocalTurns((rows) => [
-          ...rows,
-          { id, role: 'user', text, at: Date.now() },
-          {
-            id: `${id}_a`,
-            role: 'assistant',
-            text: `${calc.expression} = ${calc.result}`,
-            at: Date.now(),
-            mode: 'calc',
-          },
-        ]);
+        setLocalTurns((rows) => [...rows, ...calc]);
         setInput('');
         sending.current = false;
         return;
@@ -300,22 +315,14 @@ export default function ChatWorkbench() {
         return;
       }
       const id = `local_${Date.now()}`;
-      const answerId = `${id}_a`;
-      setLocalTurns((rows) => [
-        ...rows,
-        { id, role: 'user', text, at: Date.now() },
-        { id: answerId, role: 'assistant', text: '', at: Date.now(), mode: 'local', sources: hits },
-      ]);
+      const pair = exchange(id, text, '', 'local', hits);
+      const answerId = pair[1].id;
+      setLocalTurns((rows) => [...rows, ...pair]);
       setLocalBusy(true);
       const controller = new AbortController();
       abortRef.current = controller;
       const system = buildSystem(context, true);
-      // The local path used to send only the newest message, so a follow-up
-      // question arrived with no conversation behind it.
-      const history = localTurns
-        .filter((turn) => turn.text.trim())
-        .slice(-6)
-        .map((turn) => ({ role: turn.role, content: turn.text.slice(0, 800) }));
+      const history = localHistory(localTurns);
 
       let produced = '';
       try {
@@ -349,19 +356,8 @@ export default function ChatWorkbench() {
 
     if (!live) {
       const id = `ret_${Date.now()}`;
-      const answer = retrievalAnswer(hits);
-      setLocalTurns((rows) => [
-        ...rows,
-        { id, role: 'user', text, at: Date.now() },
-        {
-          id: `${id}_a`,
-          role: 'assistant',
-          text: answer,
-          at: Date.now(),
-          mode: 'retrieval',
-          sources: hits,
-        },
-      ]);
+      const answer = exchange(id, text, retrievalAnswer(hits), 'retrieval', hits);
+      setLocalTurns((rows) => [...rows, ...answer]);
       sending.current = false;
       return;
     }
@@ -390,6 +386,17 @@ export default function ChatWorkbench() {
     setLocalTurns([]);
     setCloudSources(new Map());
     remembered.current.clear();
+    customTitle.current = '';
+    const stale = activeId;
+    setActiveId(newChatId());
+    // 清空 means start over, so the stored copy goes too; otherwise the list
+    // keeps a session whose transcript no longer exists on screen.
+    if (stale) {
+      void deleteChat(stale)
+        .then(() => listChats(owner))
+        .then(setSessions)
+        .catch(() => undefined);
+    }
   };
 
   const importDoc = async () => {
@@ -422,11 +429,24 @@ export default function ChatWorkbench() {
     toast('已移除该资料', 'success');
   };
 
-  // Cloud replies must win once they exist: the old condition kept showing the
-  // local transcript (or an earlier retrieval-only exchange) after the engine
-  // was switched, so the new answers were invisible.
   const cloudView = cloudTurns(messages, cloudSources);
-  const turns: Turn[] = localMode ? localTurns : cloudView.length ? cloudView : localTurns;
+  // Whichever side has a transcript wins. Preferring one by engine mode hid a
+  // restored cloud session as soon as the engine was switched to local.
+  const turns: Turn[] = localTurns.length > 0 ? localTurns : cloudView;
+
+  useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
+
+  // Save as soon as a turn settles. Writing per token would hammer IndexedDB
+  // and store the same final text anyway, and the effect only re-runs on a new
+  // turn, so nothing is throttled here. An aborted answer still keeps its
+  // question, because the user turn lands before the stream starts.
+  useEffect(() => {
+    if (localBusy || status === 'streaming') return;
+    if (!activeId || turns.length === 0) return;
+    void persist(turnsRef.current);
+  }, [activeId, localBusy, status, turns.length, persist]);
 
   // A stored model name without a key would claim an engine that never runs.
   const engineLabel = localMode
@@ -462,277 +482,60 @@ export default function ChatWorkbench() {
             ) : null
           }
         >
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-5">
-            {turns.length === 0 ? (
-              <EmptyState
-                title="问点什么"
-                description="开启记忆检索后，回答会先查本地知识库，并在句末标出引用的片段编号。"
-                action={
-                  <div className="flex flex-wrap justify-center gap-1.5">
-                    {SUGGESTIONS.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => setInput(item)}
-                        className="rounded-full bg-[rgb(var(--surface))] px-3 py-1.5 text-[11px] text-muted shadow-[var(--shadow-neu-sm)] transition-colors hover:text-ink"
-                      >
-                        {item}
-                      </button>
-                    ))}
-                  </div>
-                }
-              />
-            ) : (
-              <div className="space-y-6">
-                {turns.map((turn) => (
-                  <article
-                    key={turn.id}
-                    data-turn={turn.role}
-                    className={cn(turn.role === 'user' && 'pl-0 md:pl-8')}
-                  >
-                    {turn.role === 'user' ? (
-                      <div className="flex items-start gap-3">
-                        <span className="mt-[3px] font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
-                          {new Date(turn.at).toLocaleTimeString('zh-CN', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                        <p className="flex-1 whitespace-pre-wrap rounded-2xl bg-[rgb(var(--sunken))]/45 px-4 py-2.5 text-[12.5px] leading-relaxed text-ink/85">
-                          {turn.text}
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="rounded-2xl bg-[rgb(var(--surface))]/70 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] md:px-5">
-                          {turn.text ? (
-                            <RichText text={turn.text} />
-                          ) : (
-                            <div className="space-y-2.5 py-1">
-                              <div className="skeleton h-3 w-[86%] rounded-full" />
-                              <div className="skeleton h-3 w-[72%] rounded-full" />
-                              <div className="skeleton h-3 w-[79%] rounded-full" />
-                            </div>
-                          )}
-                        </div>
+          <Transcript
+            turns={turns}
+            busy={busy}
+            error={error}
+            bottomRef={bottomRef}
+            onSuggestion={setInput}
+          />
 
-                        {turn.tools ? <ToolBadges message={turn.tools} /> : null}
-
-                        {turn.sources?.length ? (
-                          <div className="mt-3 space-y-1.5">
-                            <div className="flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/55">
-                              <Database size={10} />
-                              {turn.sources.length} 条来源
-                            </div>
-                            <SourceList text={turn.text} sources={turn.sources} />
-                          </div>
-                        ) : null}
-
-                        <div className="mt-3 flex items-center gap-2">
-                          <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/50">
-                            {turn.mode === 'retrieval'
-                              ? 'retrieval only'
-                              : turn.mode === 'calc'
-                                ? 'calculator'
-                                : turn.mode === 'local'
-                                  ? 'local runtime'
-                                  : 'ai sdk stream'}
-                          </span>
-                          {turn.text ? (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void navigator.clipboard
-                                  .writeText(turn.text)
-                                  .then(() => toast('已复制', 'success'))
-                                  .catch(() => toast('无法访问剪贴板', 'error'));
-                              }}
-                              className="ml-auto rounded-lg px-2 py-1 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
-                            >
-                              复制
-                            </button>
-                          ) : null}
-                        </div>
-                      </>
-                    )}
-                  </article>
-                ))}
-
-                {busy && !turns.some((turn) => turn.role === 'assistant' && !turn.text) ? (
-                  <div className="flex items-center gap-2 text-[11px] text-muted">
-                    <Loader2 size={12} className="animate-spin" />
-                    正在生成，可随时停止
-                  </div>
-                ) : null}
-
-                {error ? (
-                  <p className="rounded-lg bg-[#f3e2df] px-3 py-2 text-[11.5px] text-[#8c3b32]">
-                    {error.message}
-                  </p>
-                ) : null}
-
-                <div ref={bottomRef} />
-              </div>
-            )}
-          </div>
-
-          <div className="shrink-0 border-t border-[rgb(var(--line))]/55 px-4 py-3 md:px-5">
-            <div className="flex items-end gap-2">
-              <Textarea
-                rows={1}
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    void send();
-                  }
-                }}
-                placeholder="回车发送，Shift + 回车换行"
-                className="min-h-[44px] resize-none text-[12.5px]"
-              />
-              {busy ? (
-                <Button variant="inset" size="sm" onClick={cancel} className="h-11 w-11 shrink-0 p-0">
-                  <Square size={14} />
-                </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void send()}
-                  disabled={!input.trim()}
-                  className="h-11 w-11 shrink-0 p-0"
-                  aria-label="发送"
-                >
-                  <ArrowUp size={15} strokeWidth={2} />
-                </Button>
-              )}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-muted/70">
-              <span className="font-mono uppercase tracking-[0.14em]">引擎</span>
-              <span>{engineLabel}</span>
-              <Link href="/studio/settings" className="text-[rgb(var(--copper))]/85 hover:underline">
-                去设置
-              </Link>
-              <span className="text-muted/40">·</span>
-              <span>
-                检索 {ragOn ? (embedder?.label ?? '哈希') : '已关闭'}
-              </span>
-            </div>
-            {localMode ? (
-              <p className="mt-1.5 text-[10.5px] leading-relaxed text-muted/60">
-                端侧模型：短问答与摘要可用，纯算式交给本地计算器；长文改写、多步推理建议换云端。
-              </p>
-            ) : null}
-          </div>
+          <Composer
+            value={input}
+            onChange={setInput}
+            onSend={() => void send()}
+            onStop={cancel}
+            busy={busy}
+            engineLabel={engineLabel}
+            ragLabel={ragOn ? (embedder?.label ?? '哈希') : '已关闭'}
+            localMode={localMode}
+          />
         </Panel>
 
         <div className="space-y-5">
-          <Panel title="知识库" hint="入库后立刻参与检索，不上传服务器">
-            <div className="space-y-3">
-              <Input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="资料标题，例如：品牌手册"
-                className="h-9 text-[12px]"
-              />
-              <Textarea
-                rows={5}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="粘贴需要记住的内容。会自动分段并编号，长文也可以。"
-                className="text-[12px]"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-[10px] text-muted/60">
-                  {note.trim() ? `${note.trim().length} 字` : '空闲'}
-                </span>
-                <Button
-                  variant="soft"
-                  size="sm"
-                  onClick={() => void importDoc()}
-                  disabled={importing}
-                >
-                  {importing ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <BookPlus size={13} />
-                  )}
-                  入库
-                </Button>
-              </div>
-            </div>
+          <ChatSessionPanel
+            sessions={sessions}
+            activeId={activeId}
+            editing={editingTitle}
+            draft={titleDraft}
+            onDraftChange={setTitleDraft}
+            onOpen={openChat}
+            onNew={startNew}
+            onCommit={commitRename}
+            onCancel={() => setEditingTitle(false)}
+            onBeginRename={(row) => {
+              setTitleDraft(customTitle.current || row.title);
+              setEditingTitle(true);
+            }}
+            onDelete={dropChat}
+          />
 
-            <div className="mt-5 space-y-2.5">
-              <Switch
-                checked={ragOn}
-                onChange={setRagOn}
-                label="回答前先检索"
-                description="关闭后只带对话上下文，不查知识库。"
-              />
+          <KnowledgePanel
+            title={title}
+            onTitle={setTitle}
+            note={note}
+            onNote={setNote}
+            importing={importing}
+            onImport={() => void importDoc()}
+            rag={ragOn}
+            onRag={setRagOn}
+            docs={docs}
+            onDrop={(docId) => void dropDoc(docId)}
+          />
 
-              {docs.length === 0 ? (
-                <p className="text-[11px] leading-relaxed text-muted/70">
-                  还没有资料。导入后，提问时会先命中这里的内容。
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {docs.map((doc) => (
-                    <li
-                      key={doc.docId}
-                      className="flex items-start gap-2 rounded-xl px-3 py-2 shadow-[var(--shadow-inset-sm)]"
-                    >
-                      <FileText size={13} className="mt-0.5 shrink-0 text-muted/70" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[11.5px] text-ink/85">{doc.title}</div>
-                        <div className="font-mono text-[9.5px] text-muted/60">
-                          {doc.chunks} 段 · {doc.chars} 字
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void dropDoc(doc.docId)}
-                        aria-label={`移除 ${doc.title}`}
-                        className="grid h-6 w-6 place-items-center rounded-lg text-muted/60 transition-colors hover:bg-[rgb(var(--sunken))] hover:text-ink"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </Panel>
+          <RetrievalPanel embedder={embedder} />
 
-          <Panel title="检索链路" hint="当前实际使用的嵌入方式">
-            <ol className="space-y-2.5 text-[11.5px] leading-relaxed text-muted">
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-[rgb(var(--copper))]/80">01</span>
-                <span>提问先嵌入，与本地片段计算余弦相似度。</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-[rgb(var(--copper))]/80">02</span>
-                <span>取前 4 条，拼成带编号的上下文。</span>
-              </li>
-              <li className="flex gap-2">
-                <span className="font-mono text-[10px] text-[rgb(var(--copper))]/80">03</span>
-                <span>回答里的 [n] 与来源列表一一对应。</span>
-              </li>
-            </ol>
-            <div className="mt-4 flex items-center gap-2 text-[11px] text-muted">
-              <Sparkle size={12} className="text-[rgb(var(--copper))]/70" />
-              {embedder?.label ?? '读取中'}
-              {embedder?.dims ? (
-                <span className="font-mono text-[10px] text-muted/60">{embedder.dims} 维</span>
-              ) : null}
-            </div>
-            <Link
-              href="/studio/settings#models"
-              className="mt-3 inline-flex items-center gap-1 text-[11px] text-[rgb(var(--copper))]/85 hover:underline"
-            >
-              更换嵌入模型
-            </Link>
-          </Panel>
+
         </div>
       </div>
     </div>

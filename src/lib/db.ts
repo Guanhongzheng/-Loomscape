@@ -11,6 +11,7 @@ export const STORES = {
   projects: 'projects',
   conversations: 'conversations',
   messages: 'messages',
+  chats: 'chats',
   contacts: 'contacts',
   prefs: 'prefs',
 } as const;
@@ -29,13 +30,17 @@ export const KEY_PATHS: Record<StoreName, string> = {
   projects: 'id',
   conversations: 'id',
   messages: 'id',
+  chats: 'id',
   contacts: 'uid',
   prefs: 'key',
 };
 
 const DB_NAME = 'loomscape';
-/** v2: providers moved from an `id` key to `channel`. */
-const DB_VERSION = 2;
+/**
+ * v2: providers moved from an `id` key to `channel`.
+ * v3: `chats` keeps chat transcripts, so a reload no longer loses them.
+ */
+const DB_VERSION = 3;
 
 let connection: Promise<IDBDatabase> | null = null;
 let handle: IDBDatabase | null = null;
@@ -84,6 +89,11 @@ function upgrade(db: IDBDatabase, oldVersion: number): void {
   }
   if (!db.objectStoreNames.contains(STORES.prefs)) {
     db.createObjectStore(STORES.prefs, { keyPath: KEY_PATHS.prefs });
+  }
+  if (!db.objectStoreNames.contains(STORES.chats)) {
+    const chats = db.createObjectStore(STORES.chats, { keyPath: KEY_PATHS.chats });
+    chats.createIndex('updatedAt', 'updatedAt');
+    chats.createIndex('owner', 'owner');
   }
 
   // v1 declared `providers` with keyPath `id`, but endpoints are keyed by

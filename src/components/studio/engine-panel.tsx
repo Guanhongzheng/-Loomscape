@@ -1,11 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Download, Loader2, Power, RefreshCw, Trash2, TriangleAlert } from 'lucide-react';
+import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { Segmented } from '@/components/ui/controls';
 import { Panel } from '@/components/studio/workbench';
+import { SchedulingCard } from '@/components/studio/scheduling-card';
+import { ModelGroup } from '@/components/studio/model-list';
+import { CloudEndpointForm } from '@/components/studio/cloud-endpoint-form';
+import { VaultPanel } from '@/components/studio/vault-panel';
+import { residentCap, threadCap } from '@/lib/scheduling';
 import { toast } from '@/components/ui/toast';
 import {
   ALL_LOCAL_MODELS,
@@ -17,7 +22,6 @@ import {
   formatBytes,
   poolBudgetMB,
   poolOf,
-  splitOf,
   poolPeakMB,
   // `roomFor` already means "disk space" in this file; the memory question is
   // a different one and gets its own name.
@@ -32,7 +36,6 @@ import {
   type EnginePrefs,
   type GpuPrecision,
   type LocalModel,
-  type ModelDtype,
   type ModelRuntimeState,
   type ResidentPool,
   type ResidentInfo,
@@ -44,28 +47,20 @@ import {
   removeModel,
   runtimeInfo,
   scanModelCache,
+  threadCount,
   unloadModel,
   type CacheStats,
 } from '@/lib/local-runtime';
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { persistentStorageGranted } from '@/lib/model-cache';
 import { useEndpoints } from '@/lib/endpoint-store';
-import { PRESETS, hasKey, type Endpoint } from '@/lib/providers';
+import { hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
-import { describeError, looksLikeMemoryPressure } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { roomFor, storageUsage, type StorageUsage } from '@/lib/storage';
 import { cn } from '@/lib/cn';
 
 type RuntimeFacts = { cores: number; isolated: boolean; threads: number; deviceMemory?: number };
-
-const fieldLabel = 'mb-1.5 block text-[10.5px] text-muted';
-
-/** How each weight file is named to the user. */
-const PRECISION_LABEL: Record<ModelDtype, string> = {
-  q8: 'int8',
-  fp16: 'fp16',
-  q4f16: '4 位',
-};
 
 export function EnginePanel() {
   const prefs = useEngines((state) => state.prefs);
@@ -119,19 +114,6 @@ export function EnginePanel() {
   useEffect(() => {
     setDraft(endpoints.text);
   }, [endpoints.text]);
-
-  const applyPreset = (presetId: string) => {
-    const preset = PRESETS.text.find((item) => item.id === presetId);
-    if (!preset) return;
-    setDraft((current) => ({
-      ...current,
-      preset: preset.id,
-      label: preset.label,
-      baseUrl: preset.baseUrl,
-      shape: preset.shape,
-      model: preset.models[0] ?? current.model,
-    }));
-  };
 
   const saveCloud = async () => {
     try {
@@ -197,13 +179,35 @@ export function EnginePanel() {
       (row) => row.task !== model.task && poolOf(row.backend) === poolOf(backend),
     );
     const otherModel = other ? findModel(other.modelId) : undefined;
+    // Two ways this load evicts the other side: the pool has no room, or the
+    // profile only allows one session per pool. The second one used to be
+    // silent — `lean` dropped the decoder without a word.
+    const pool = poolOf(backend);
+    const overCap = residents.filter((row) => poolOf(row.backend) === pool).length >= residentCap(
+      prefs.profile,
+      pool,
+    );
+    // Charge the session for the threads it will actually open; the estimate
+    // now includes one arena per worker, so this matches what `makeRoom` sees.
+    const plannedThreads = threadCount(
+      facts?.cores ?? 4,
+      facts?.isolated ?? false,
+      model.task,
+      false,
+      threadCap(prefs.profile, model.task),
+    );
+    const hasRoom = memoryRoomFor(residents, model, backend, prefs.gpuPrecision, plannedThreads);
     // Sessions only compete inside one pool: a GPU decoder and a WASM embedder
     // are budgeted separately, so they never evict each other.
-    if (other && otherModel && !memoryRoomFor(residents, model, backend)) {
+    if (other && otherModel && (overCap || !hasRoom)) {
       toast(
-        `加载 ${model.label} 会先卸载 ${otherModel.label}：两个会话合计超出${
-          poolOf(backend) === 'gpu' ? '显存' : ' WASM 内存'
-        }`,
+        overCap && hasRoom
+          ? `加载 ${model.label} 会先卸载 ${otherModel.label}：当前策略每个${
+              pool === 'gpu' ? '显存池' : '内存池'
+            }只留一个会话`
+          : `加载 ${model.label} 会先卸载 ${otherModel.label}：两个会话合计超出${
+              pool === 'gpu' ? '显存' : ' WASM 内存'
+            }`,
         'info',
       );
     }
@@ -331,7 +335,6 @@ export function EnginePanel() {
     }
   };
 
-  const preset = PRESETS.text.find((item) => item.id === draft.preset);
   const textModel = ALL_LOCAL_MODELS.find((item) => item.id === prefs.textModelId);
   // A loaded session counts even when the cache scan ran before the weights
   // were flushed, otherwise a just-loaded model still offers "去下载".
@@ -349,7 +352,9 @@ export function EnginePanel() {
     prefs.textMode === 'api'
       ? cloudReady
         ? `云端 · ${draft.model}`
-        : '云端 · 还没填密钥'
+        : endpoints.text.sealed
+          ? '云端 · 密钥已加密，待解锁'
+          : '云端 · 还没填密钥'
       : `${textModel?.label ?? '未选择'}${
           residents.some((row) => row.modelId === prefs.textModelId)
             ? ' · 已加载'
@@ -409,87 +414,14 @@ export function EnginePanel() {
           </div>
 
           {prefs.textMode === 'api' ? (
-            <div className="rounded-xl px-4 py-4 shadow-[var(--shadow-inset-sm)]">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div>
-                  <label className={fieldLabel}>服务商</label>
-                  <Select
-                    value={draft.preset}
-                    onChange={(event) => applyPreset(event.target.value)}
-                    className="h-9 text-[12px]"
-                  >
-                    {PRESETS.text.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-
-                <div>
-                  <label className={fieldLabel}>模型</label>
-                  {preset && preset.models.length > 0 ? (
-                    <Select
-                      value={preset.models.includes(draft.model) ? draft.model : preset.models[0]}
-                      onChange={(event) => setDraft((c) => ({ ...c, model: event.target.value }))}
-                      className="h-9 text-[12px]"
-                    >
-                      {preset.models.map((model) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <Input
-                      value={draft.model}
-                      onChange={(event) => setDraft((c) => ({ ...c, model: event.target.value }))}
-                      placeholder="model-id"
-                      className="h-9 font-mono text-[11.5px]"
-                      spellCheck={false}
-                    />
-                  )}
-                </div>
-
-                <div>
-                  <label className={fieldLabel}>API Key</label>
-                  <Input
-                    type="password"
-                    value={draft.apiKey}
-                    onChange={(event) => setDraft((c) => ({ ...c, apiKey: event.target.value }))}
-                    placeholder={draft.shape === 'anthropic-chat' ? 'sk-ant-...' : 'sk-...'}
-                    className="h-9 font-mono text-[11.5px]"
-                    spellCheck={false}
-                    autoComplete="off"
-                  />
-                </div>
-
-                <div>
-                  <label className={fieldLabel}>Base URL</label>
-                  <Input
-                    value={draft.baseUrl}
-                    onChange={(event) => setDraft((c) => ({ ...c, baseUrl: event.target.value }))}
-                    placeholder="https://api.example.com/v1"
-                    className="h-9 font-mono text-[11.5px]"
-                    spellCheck={false}
-                  />
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <Button variant="primary" size="sm" onClick={saveCloud}>
-                  <Check size={12} />
-                  保存并使用
-                </Button>
-                <Button variant="ghost" size="sm" onClick={testCloud} disabled={testing || !cloudReady}>
-                  {testing ? <Loader2 size={11} className="animate-spin" /> : null}
-                  测试连接
-                </Button>
-                <span className="text-[10.5px] text-muted/60">
-                  密钥只写进本机 IndexedDB，请求经 /api/chat 转发，不落盘。
-                </span>
-              </div>
-            </div>
+            <CloudEndpointForm
+              draft={draft}
+              onChange={setDraft}
+              onSave={() => void saveCloud()}
+              onTest={() => void testCloud()}
+              testing={testing}
+              ready={cloudReady}
+            />
           ) : null}
 
           <div className="h-px bg-[rgb(var(--line))]/45" />
@@ -702,218 +634,9 @@ export function EnginePanel() {
         </p>
         </div>
       </Panel>
+
+      <VaultPanel />
+      <SchedulingCard />
     </>
-  );
-}
-
-type RowProps = {
-  runtime: Record<string, ModelRuntimeState>;
-  cache: Record<string, CacheStats>;
-  residents: ResidentInfo[];
-  backend: Backend;
-  precision: GpuPrecision;
-  onActivate: (model: LocalModel) => Promise<void>;
-  onUnload: (model: LocalModel) => Promise<void>;
-  onDrop: (model: LocalModel) => Promise<void>;
-  onClearAndRetry: (model: LocalModel) => Promise<void>;
-};
-
-/** One titled group of model rows; the title replaces the old per-card badge. */
-function ModelGroup({
-  title,
-  models: rows,
-  ...row
-}: { title: string; models: LocalModel[]; accent: boolean } & RowProps) {
-  return (
-    <div className="space-y-2.5">
-      <div className="flex items-center gap-2.5">
-        <span className="text-[11px] text-muted/75">{title}</span>
-        <span className="h-px flex-1 bg-[rgb(var(--line))]/45" />
-      </div>
-      <div className="space-y-2.5">
-        {rows.map((model) => (
-          <ModelRow key={model.id} model={model} {...row} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ModelRow({
-  model,
-  accent,
-  runtime,
-  cache,
-  residents,
-  backend,
-  precision,
-  onActivate,
-  onUnload,
-  onDrop,
-  onClearAndRetry,
-}: { model: LocalModel; accent: boolean } & RowProps) {
-  const state = runtime[model.id];
-  const stats = cache[model.id];
-  const loadedNow = residents.some((row) => row.modelId === model.id);
-  // A WebGPU-only model has no file the WASM heap can take, so the row quotes
-  // the 4-bit size and states the requirement instead of offering a load that
-  // would abort the tab.
-  const blocked = !canRun(model, backend);
-  const dtype = blocked ? 'q4f16' : dtypeFor(model, backend, precision);
-  // fp16 for this model is larger than the runtime can turn into a session, so
-  // the loader quietly picked 4-bit; the row has to say that out loud.
-  const downgraded = !blocked && precision !== 'q4f16' && dtype === 'q4f16';
-  const split = splitOf(model, dtype);
-  const residentDtype = residents.find((row) => row.modelId === model.id)?.dtype;
-  // A just-loaded model is ready even if the cache scan ran a beat too early
-  // to see its weight file.
-  const ready = !blocked && ((stats?.[dtype] ?? false) || loadedNow);
-  // Some other precision is on disk but this backend cannot run it.
-  const alternate = (['q8', 'fp16', 'q4f16'] as ModelDtype[]).find(
-    (item) => item !== dtype && (stats?.[item] ?? false),
-  );
-  const otherReady = !ready && Boolean(alternate);
-  const leftovers = !ready && !otherReady && (stats?.files ?? 0) > 0;
-  const loading = state?.state === 'downloading';
-  const failed = state?.state === 'error';
-  const percent = Math.round((state?.progress ?? 0) * 100);
-
-  return (
-    <div
-      data-model={model.id}
-      data-loaded={loadedNow ? 'true' : 'false'}
-      className={cn(
-        'rounded-xl px-4 py-3.5 shadow-[var(--shadow-inset-sm)]',
-        loadedNow && 'ring-1 ring-[rgb(var(--accent))]/25',
-      )}
-    >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-[13px] text-ink/90">{model.label}</h4>
-            {blocked && !loadedNow ? (
-              <span className="text-[10px] text-muted/60">仅 WebGPU</span>
-            ) : loadedNow ? (
-              <span className="flex items-center gap-1 text-[10px] text-[#3f6b4f]">
-                <Check size={11} />
-                已加载
-                {residentDtype && residentDtype !== dtype
-                  ? `（${PRECISION_LABEL[residentDtype]}）`
-                  : ''}
-              </span>
-            ) : ready ? (
-              <span className="text-[10px] text-muted/60">已下载</span>
-            ) : otherReady && alternate ? (
-              <span className="text-[10px] text-muted/55">
-                仅有 {PRECISION_LABEL[alternate]} 权重
-              </span>
-            ) : leftovers ? (
-              <span className="text-[10px] text-muted/50">旧权重</span>
-            ) : null}
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted/85">{model.note}</p>
-          <p className="mt-1.5 text-[10.5px] text-muted/60">
-            约{' '}
-            {formatBytes(
-              (blocked ? model.sizesMB.q4f16 : sizeFor(model, backend, precision)) * 1024 * 1024,
-            )}{' '}
-            · {PRECISION_LABEL[dtype]}
-            {blocked ? ' · 需 WebGPU' : downgraded ? ' · 已降到 4 位' : ''}
-            {split.files > 1 ? ` · ${split.files} 个权重文件` : ''}
-            {model.dims ? ` · ${model.dims} 维` : ` · ${model.languages}`}
-            {stats && stats.bytes > 0 ? ` · 占 ${formatBytes(stats.bytes)}` : ''}
-          </p>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1.5">
-          {/* A loaded session keeps the file it was opened from, so changing
-              the precision needs a reload rather than a silent relabel. */}
-          {loadedNow && residentDtype && residentDtype !== dtype ? (
-            <Button variant="soft" size="sm" onClick={() => void onActivate(model)} disabled={loading}>
-              <RefreshCw size={11} className={loading ? 'animate-spin' : undefined} />
-              {loading ? '切换中' : `切换到 ${PRECISION_LABEL[dtype]}`}
-            </Button>
-          ) : null}
-
-          {loadedNow ? (
-            <Button variant="ghost" size="sm" onClick={() => void onUnload(model)}>
-              <Power size={11} />
-              卸载
-            </Button>
-          ) : (
-            <Button
-              // Only the engine that is actually in use gets the dark button;
-              // four primaries in a column read as four equal demands.
-              variant={!ready && accent ? 'primary' : 'soft'}
-              size="sm"
-              onClick={() => void onActivate(model)}
-              disabled={loading || blocked}
-              title={blocked ? 'int8 权重超出 wasm 堆，需要在设置里把后端切到 WebGPU' : undefined}
-            >
-              {loading ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-              {loading ? '加载中' : blocked ? '需 WebGPU' : ready ? '加载' : '下载并加载'}
-            </Button>
-          )}
-
-          {!loadedNow && (ready || leftovers) ? (
-            <button
-              type="button"
-              aria-label={leftovers ? '清理旧权重' : '删除下载'}
-              title={leftovers ? '清理旧权重' : '删除下载'}
-              onClick={() => void onDrop(model)}
-              className="grid h-9 w-8 place-items-center rounded-lg text-muted/50 transition-colors hover:bg-[rgb(var(--surface))]/70 hover:text-[#a24a3f]"
-            >
-              <Trash2 size={12} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="mt-3">
-          <div className="mb-1.5 flex items-center justify-between font-mono text-[9.5px] text-muted/70">
-            <span className="truncate pr-3">{state?.file ?? '准备中'}</span>
-            <span className="tabular-nums">{percent}%</span>
-          </div>
-          <div className="h-1.5 overflow-hidden rounded-full shadow-[var(--shadow-inset-sm)]">
-            <div
-              className="h-full rounded-full bg-[rgb(var(--accent))]/70 transition-[width] duration-300"
-              style={{ width: `${Math.max(percent, 2)}%` }}
-            />
-          </div>
-          <div className="mt-1 flex justify-between font-mono text-[9px] text-muted/50">
-            <span>
-              {formatBytes(state?.loaded)} / {formatBytes(state?.total)}
-            </span>
-            <span>{state?.backend === 'webgpu' ? 'WebGPU' : 'WASM'}</span>
-          </div>
-        </div>
-      ) : null}
-
-      {failed ? (
-        <div className="mt-3 space-y-2">
-          <div className="flex items-start gap-1.5 text-[10.5px] leading-relaxed text-[#8c3b32]">
-            <TriangleAlert size={11} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 break-words">{state?.message ?? '加载失败'}</span>
-          </div>
-          {looksLikeMemoryPressure(state?.message ?? '') ? (
-            <p className="text-[10px] leading-relaxed text-[#8c3b32]/75">
-              更像内存或存储不足：先关掉占用大的标签页，再重试。
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="ghost" size="sm" onClick={() => void onActivate(model)}>
-              <RefreshCw size={11} />
-              重试
-            </Button>
-            {ready ? (
-              <Button variant="ghost" size="sm" onClick={() => void onClearAndRetry(model)}>
-                删除缓存并重试
-              </Button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
