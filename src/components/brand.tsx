@@ -22,14 +22,34 @@ export function Mark({ className }: { className?: string }) {
   );
 }
 
-export function Wordmark({ className, compact = false }: { className?: string; compact?: boolean }) {
+export function Wordmark({
+  className,
+  compact = false,
+  tone = 'ink',
+}: {
+  className?: string;
+  compact?: boolean;
+  tone?: 'ink' | 'light';
+}) {
+  const light = tone === 'light';
   return (
-    <span className={cn('flex items-center gap-3 text-ink', className)}>
-      <Mark className="h-[26px] w-[26px]" />
+    <span
+      className={cn(
+        'flex items-center gap-3',
+        light ? 'text-[#f6f2ea]' : 'text-ink',
+        className,
+      )}
+    >
+      <Mark className="h-[28px] w-[28px]" />
       <span className="flex flex-col leading-none">
-        <span className="font-serif text-[15px] tracking-[0.08em]">织境</span>
+        <span className="font-serif text-[16px] tracking-[0.08em]">织境</span>
         {compact ? null : (
-          <span className="mt-1 font-mono text-[8.5px] uppercase tracking-[0.32em] text-muted/80">
+          <span
+            className={cn(
+              'mt-1 font-mono text-[9px] uppercase tracking-[0.32em]',
+              light ? 'text-[#f6f2ea]/50' : 'text-muted/85',
+            )}
+          >
             Loomscape
           </span>
         )}

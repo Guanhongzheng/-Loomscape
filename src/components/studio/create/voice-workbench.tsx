@@ -240,7 +240,7 @@ export default function VoiceWorkbench() {
           title="录音"
           hint={recording ? '正在录制' : clip ? '已有一段录音' : '点击开始'}
           action={
-            <span className="font-mono text-[11px] tabular-nums text-ink/70">
+            <span className="font-mono text-[11.5px] tabular-nums text-ink/70">
               {elapsed.toFixed(1)}s
             </span>
           }
@@ -248,7 +248,7 @@ export default function VoiceWorkbench() {
           <div className="relative overflow-hidden rounded-xl bg-[rgb(var(--sunken))] px-3 py-6 shadow-[var(--shadow-inset-sm)]">
             <canvas ref={canvasRef} className="h-24 w-full" aria-hidden="true" />
             {recording ? (
-              <span className="absolute left-4 top-3 flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[0.2em] text-[#a24a3f]">
+              <span className="absolute left-4 top-3 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-[#a24a3f]">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#a24a3f]" />
                 rec
               </span>
@@ -279,18 +279,18 @@ export default function VoiceWorkbench() {
           </div>
 
           {!speechReady ? (
-            <p className="mt-3 text-[10.5px] leading-relaxed text-muted/70">
+            <p className="mt-3 text-[11px] leading-relaxed text-muted/70">
               转写需要语音端点（Whisper 兼容）。未配置时仍可录音，并手动补录文字。
             </p>
           ) : null}
 
           <div className="mt-6">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-[12px] font-medium tracking-wide text-muted">文稿</span>
+              <span className="text-[12.5px] font-medium tracking-wide text-muted">文稿</span>
               <button
                 type="button"
                 onClick={keep}
-                className="flex items-center gap-1.5 text-[11px] text-muted transition-colors hover:text-ink"
+                className="flex items-center gap-1.5 text-[11.5px] text-muted transition-colors hover:text-ink"
               >
                 <Save size={11} />
                 存入作品库
@@ -317,7 +317,7 @@ export default function VoiceWorkbench() {
 
           <div className="mt-4 space-y-4">
             <div>
-              <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">音色</div>
+              <div className="mb-2 text-[12.5px] font-medium tracking-wide text-muted">音色</div>
               <Select value={voiceName} onChange={(event) => setVoiceName(event.target.value)}>
                 {voices.length === 0 ? <option value="">系统默认</option> : null}
                 {voices.map((voice) => (
@@ -359,7 +359,7 @@ export default function VoiceWorkbench() {
           </div>
 
           <div className="mt-6 rounded-xl px-3 py-3 shadow-[var(--shadow-inset-sm)]">
-            <div className="flex items-center gap-2 text-[11px] text-muted">
+            <div className="flex items-center gap-2 text-[11.5px] text-muted">
               <Volume2 size={12} />
               语音引擎由系统提供，可用音色取决于当前设备。
             </div>

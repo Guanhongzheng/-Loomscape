@@ -133,11 +133,89 @@ async function run() {
   });
 
   await page.goto(base + '/', { waitUntil: 'networkidle' });
-  await page.waitForTimeout(1500);
+  await page.waitForFunction(
+    () => {
+      const chrome = document.querySelectorAll('[data-intro-chrome].is-revealed').length;
+      const slide = document.querySelectorAll('[data-slide-reveal].is-revealed').length;
+      const boxes = Array.from(document.querySelectorAll('.weave-marquee'));
+      return (
+        chrome === 2 &&
+        slide === 5 &&
+        boxes.every((box) => Number(getComputedStyle(box).opacity) < 0.01)
+      );
+    },
+    null,
+    { timeout: 25_000 },
+  );
+  check('首页导航和首屏内容绘制完成', true);
+  const introBuild = await page.evaluate(() => ({
+    chrome: document.querySelectorAll('[data-intro-chrome].is-revealed').length,
+    revealed: document.querySelectorAll('[data-slide-reveal].is-revealed').length,
+    boxesHidden: Array.from(document.querySelectorAll('.weave-marquee')).every(
+      (box) => Number(getComputedStyle(box).opacity) < 0.01,
+    ),
+    cursorsVisible: Array.from(document.querySelectorAll('.weave-cursor')).filter(
+      (node) => Number(getComputedStyle(node).opacity) > 0.01,
+    ).length,
+    aiCursorVisible: Array.from(document.querySelectorAll('.ai-cursor, .cursor-mode-pointer')).some(
+      (node) => Number(getComputedStyle(node).opacity) > 0.01,
+    ),
+    h1Visible: Boolean(document.querySelector('h1')?.checkVisibility()),
+  }));
+  check(
+    '每块画完光标和选框一起消失',
+    introBuild.chrome === 2 &&
+      introBuild.revealed === 5 &&
+      introBuild.boxesHidden &&
+      introBuild.cursorsVisible === 0 &&
+      introBuild.aiCursorVisible &&
+      introBuild.h1Visible,
+    `chrome=${introBuild.chrome} revealed=${introBuild.revealed} boxes=${introBuild.boxesHidden} cursors=${introBuild.cursorsVisible} ai=${introBuild.aiCursorVisible}`,
+  );
+  await page.waitForTimeout(400);
 
   const heroVisible = await page.locator('h1').first().isVisible();
   check('首屏渲染完成', heroVisible);
   await page.screenshot({ path: path.join(shots, '01-intro.png') });
+
+  // The intro pager must be reachable from both the top tabs and the bottom
+  // arrows/dots, not only by wheel gestures.
+  const introIndex = () =>
+    page
+      .locator('[data-intro-index]')
+      .getAttribute('data-intro-index')
+      .then((value) => Number(value ?? -1));
+  check('介绍页初始分区', (await introIndex()) === 0, `index=${await introIndex()}`);
+
+  await page.getByRole('button', { name: '能力', exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '1',
+  );
+  check('介绍页顶部导航可点击', (await introIndex()) === 1);
+
+  await page.getByRole('button', { name: '下一页' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '2',
+  );
+  check('介绍页下一页可点击', (await introIndex()) === 2);
+
+  await page.getByRole('button', { name: '上一页' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '1',
+  );
+  check('介绍页上一页可点击', (await introIndex()) === 1);
+
+  await page.getByRole('button', { name: '前往关于' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '3',
+  );
+  check('介绍页底部分页点可点击', (await introIndex()) === 3);
+
+  await page.getByRole('button', { name: '前往简介' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '0',
+  );
+  check('介绍页可回到首屏', (await introIndex()) === 0);
 
   // Entering the workspace is a vertical snap, not a route change.
   await page.getByRole('button', { name: /进入工作台/ }).first().click();
@@ -158,23 +236,125 @@ async function run() {
   );
   check('吸附不改路由', snap.path === '/', snap.path);
 
-  // The workspace navigation is split top and bottom; the old sidebar is gone.
-  const nav = await page.evaluate(() => ({
-    aside: document.querySelectorAll('aside').length,
-    header: Boolean(document.querySelector('header')),
-    dock: document.querySelectorAll('footer nav a').length,
-    dockVisible: (() => {
-      const el = document.querySelector('footer nav');
-      if (!el) return false;
-      const box = el.getBoundingClientRect();
-      return box.height > 20 && box.bottom <= window.innerHeight + 1;
-    })(),
-  }));
-  check('左侧栏已移除', nav.aside === 0, `aside=${nav.aside}`);
+  // Desktop navigation is a real rail; the five-item dock is now the phone
+  // pattern and is checked in the mobile pass below.
+  const nav = await page.evaluate(() => {
+    const rail = document.querySelector('[data-shell-nav]');
+    const box = rail?.getBoundingClientRect();
+    return {
+      aside: document.querySelectorAll('[data-shell-nav]').length,
+      links: document.querySelectorAll('[data-shell-nav] nav a').length,
+      railVisible: Boolean(box && box.width > 200 && box.right <= window.innerWidth + 1),
+      header: Boolean(document.querySelector('header')),
+    };
+  });
+  check('桌面侧栏存在且在视口内', nav.aside === 1 && nav.railVisible, `aside=${nav.aside}`);
+  check('侧栏有五个入口', nav.links === 5, `links=${nav.links}`);
   check('顶部栏存在', nav.header);
-  check('底部坞有五个入口', nav.dock === 5, `links=${nav.dock}`);
-  check('底部坞在视口内', nav.dockVisible);
   await page.screenshot({ path: path.join(shots, '02-workspace.png') });
+
+  // Black-box click pass over the overview: the continue card and the four
+  // workbench shortcuts must actually navigate, not just render as links.
+  await page.locator('[data-overview="continue"] a[data-overview-link="continue"]').first().click();
+  await page.waitForURL('**/studio/create**', { timeout: 8_000 });
+  check('总览继续入口可点击', page.url().includes('/studio/create'), page.url());
+
+  // Seed one project through IndexedDB, then verify the data-driven "continue"
+  // card chooses the matching tool tab — not just the generic create route.
+  // The main flow reaches the workspace as a guest; if the gate is still up
+  // (fresh profile), accept it before looking for an owner id.
+  const gate = page.locator('[data-auth-gate]');
+  if (await gate.count()) {
+    await gate.getByRole('button', { name: /以访客身份继续/ }).click();
+    await page.waitForTimeout(900);
+  }
+  await page.waitForFunction(
+    () => Boolean(document.querySelector('[data-user-id]')?.getAttribute('data-user-id')),
+    null,
+    { timeout: 10_000 },
+  );
+  const seeded = await page.evaluate(async () => {
+    const owner = document.querySelector('[data-user-id]')?.getAttribute('data-user-id') ?? '';
+    if (!owner) return false;
+    return await new Promise((resolve) => {
+      const request = indexedDB.open('loomscape');
+      request.onsuccess = () => {
+        try {
+          const tx = request.result.transaction('projects', 'readwrite');
+          tx.objectStore('projects').put({
+            id: 'e2e-overview-image',
+            owner,
+            kind: 'image',
+            title: 'E2E 封面稿',
+            summary: '总览继续入口的夹具',
+            payload: {},
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          });
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => resolve(false);
+        } catch {
+          resolve(false);
+        }
+      };
+      request.onerror = () => resolve(false);
+    });
+  });
+  await page.goto(base + '/#workspace', { waitUntil: 'networkidle' });
+  await page.waitForFunction(
+    () => (document.querySelector('[data-overview="continue"]')?.textContent ?? '').includes('E2E 封面稿'),
+    null,
+    { timeout: 10_000 },
+  );
+  await page.locator('[data-overview-link="continue"]').click();
+  await page.waitForURL('**/studio/create?tab=image**', { timeout: 8_000 });
+  check(
+    '总览继续上次指向对应工具',
+    seeded && page.url().includes('tab=image'),
+    `seeded=${seeded} url=${page.url()}`,
+  );
+
+  const overviewTargets = [
+    ['01', '/studio/create'],
+    ['02', '/studio/chat'],
+    ['03', '/studio/social'],
+    ['04', '/studio/settings'],
+  ];
+  let overviewClicks = 0;
+  const failedOverview = [];
+  for (const [index, route] of overviewTargets) {
+    await page.goto(base + '/#workspace', { waitUntil: 'networkidle' });
+    await page.waitForSelector(`[data-workbench="${index}"]`, { timeout: 10_000 });
+    await page.locator(`[data-workbench="${index}"]`).click();
+    try {
+      await page.waitForURL('**' + route + '**', { timeout: 8_000 });
+      overviewClicks += 1;
+    } catch {
+      failedOverview.push(`${index}→${route}`);
+    }
+  }
+  check(
+    '总览工作台卡片可点击',
+    overviewClicks === 4,
+    failedOverview.length ? failedOverview.join(' | ') : `ok=${overviewClicks}`,
+  );
+
+  // The rail is a second, always-present navigation surface. Walk all four
+  // workbenches through it so a client-side transition cannot silently break.
+  const rail = page.locator('[data-shell-nav] nav');
+  const railTargets = [
+    ['创作', '/studio/create'],
+    ['对话', '/studio/chat'],
+    ['社交', '/studio/social'],
+    ['设置', '/studio/settings'],
+  ];
+  let railClicks = 0;
+  for (const [label, route] of railTargets) {
+    await rail.getByRole('link', { name: label, exact: true }).click();
+    await page.waitForURL((url) => url.pathname === route, { timeout: 8_000 });
+    railClicks += 1;
+  }
+  check('桌面侧栏点击跳转', railClicks === 4, `ok=${railClicks}`);
 
   // Regression for the reported DataError: saving an endpoint used to fail
   // because the store expected an `id` that endpoints never had.
@@ -360,12 +540,9 @@ async function run() {
   // `email`; guests used to be written with email: '', so the second guest hit
   // a ConstraintError and the UI could only say 无法创建访客会话.
   const uidOf = () =>
-    rag.evaluate(() => {
-      const text = document.querySelector('header')?.innerText ?? '';
-      return text.trim().split('\n').pop()?.trim() ?? '';
-    });
+    rag.evaluate(() => document.querySelector('[data-uid]')?.getAttribute('data-uid') ?? '');
   const beforeGuest = await uidOf();
-  await rag.locator('button[aria-label="退出登录"]').click();
+  await rag.locator('button[aria-label="退出登录"]').first().click();
   await rag.waitForTimeout(500);
   await rag.locator('[data-auth-gate]').getByRole('button', { name: /以访客身份继续/ }).click();
   await rag.waitForTimeout(1200);
@@ -398,13 +575,36 @@ async function run() {
   const mobileMetrics = await small.evaluate(() => ({
     overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     dock: Boolean(document.querySelector('footer nav')),
+    dockLinks: document.querySelectorAll('footer nav a').length,
     dockHeight: document.querySelector('footer nav')?.getBoundingClientRect().height ?? 0,
     top: Math.round(document.querySelector('div.snap-y')?.scrollTop ?? -1),
   }));
   check('移动端无横向溢出', mobileMetrics.overflow <= 1, `overflow=${mobileMetrics.overflow}`);
-  check('移动端底部坞可见', mobileMetrics.dock && mobileMetrics.dockHeight > 20);
+  check(
+    '移动端底部坞可见',
+    mobileMetrics.dock && mobileMetrics.dockHeight > 20,
+    `dock=${mobileMetrics.dock}`,
+  );
+  check('移动端底部坞有五个入口', mobileMetrics.dockLinks === 5, `links=${mobileMetrics.dockLinks}`);
   check('移动端深链落在工作台', mobileMetrics.top > 100, `scrollTop=${mobileMetrics.top}`);
   await small.screenshot({ path: path.join(shots, '04-mobile.png') });
+
+  // The bottom dock is the only navigation surface on phones; click all the
+  // way around it instead of merely counting links.
+  const mobileDock = small.locator('footer nav');
+  const dockTargets = [
+    ['创作', '/studio/create'],
+    ['对话', '/studio/chat'],
+    ['社交', '/studio/social'],
+    ['总览', '/'],
+  ];
+  let dockClicks = 0;
+  for (const [label, route] of dockTargets) {
+    await mobileDock.getByRole('link', { name: label, exact: true }).click();
+    await small.waitForURL((url) => url.pathname === route, { timeout: 8_000 });
+    dockClicks += 1;
+  }
+  check('移动端底部坞点击跳转', dockClicks === 4, `ok=${dockClicks}`);
 
   await small.goto(base + '/studio/chat', { waitUntil: 'networkidle' });
   await small.waitForTimeout(900);
@@ -415,6 +615,231 @@ async function run() {
   await small.screenshot({ path: path.join(shots, '05-mobile-chat.png') });
 
   await mobile.close();
+
+  // P0-3: locking the vault must clear the decrypted key from the endpoint
+  // store and leave the chat page a way back to the passphrase field, instead
+  // of quietly falling back to "未配置" (or, worse, using the stale key).
+  const vaultContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  vaultContext.setDefaultTimeout(12_000);
+  vaultContext.setDefaultNavigationTimeout(25_000);
+  const vaultPage = await vaultContext.newPage();
+  vaultPage.on('pageerror', (error) => errors.push(`vault pageerror: ${error.message}`));
+  vaultPage.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`vault console: ${message.text()}`);
+  });
+
+  await vaultPage.goto(base + '/studio/settings', { waitUntil: 'networkidle' });
+  await vaultPage.waitForTimeout(800);
+  await vaultPage.locator('input[type="password"]').first().fill('sk-vault-e2e-key-1234');
+  await vaultPage.getByRole('button', { name: '保存并使用', exact: true }).click();
+  await vaultPage.waitForTimeout(900);
+
+  await vaultPage.locator('input[aria-label="保险箱口令"]').fill('correct horse battery');
+  await vaultPage.getByRole('button', { name: '启用', exact: true }).click();
+  await vaultPage.waitForTimeout(1200);
+  await vaultPage.getByRole('button', { name: '锁定', exact: true }).click();
+  await vaultPage.waitForTimeout(800);
+
+  await vaultPage.goto(base + '/studio/chat', { waitUntil: 'networkidle' });
+  await vaultPage.waitForTimeout(900);
+  const lockedUi = await vaultPage.evaluate(() => ({
+    label: document.body.innerText.includes('云端 · 密钥保险箱已锁定'),
+    notice: Boolean(document.querySelector('[data-vault-locked="true"]')),
+    unlock: Array.from(document.querySelectorAll('a')).some(
+      (anchor) =>
+        anchor.textContent?.trim() === '去解锁' &&
+        anchor.getAttribute('href') === '/studio/settings#vault',
+    ),
+  }));
+  check('锁定后对话页标出待解锁', lockedUi.label && lockedUi.notice, JSON.stringify(lockedUi));
+  check('锁定后给出解锁入口', lockedUi.unlock);
+
+  const composer = vaultPage.locator('textarea[placeholder^="回车发送"]');
+  await composer.fill('锁定时还能发吗？');
+  await composer.press('Enter');
+  await vaultPage.waitForTimeout(400);
+  const blocked = await vaultPage.evaluate(() => ({
+    kept: document.querySelector('textarea[placeholder^="回车发送"]')?.value ?? '',
+    toast: document.body.innerText.includes('密钥保险箱已锁定'),
+  }));
+  check(
+    '锁定态发送被拦下并保留草稿',
+    blocked.kept === '锁定时还能发吗？' && blocked.toast,
+    JSON.stringify(blocked),
+  );
+
+  await vaultPage.getByRole('link', { name: '去解锁' }).click();
+  await vaultPage.waitForTimeout(700);
+  const jumped = await vaultPage.evaluate(() => {
+    const panel = document.querySelector('#vault');
+    const box = panel?.getBoundingClientRect();
+    return {
+      hash: window.location.hash,
+      panel: Boolean(panel),
+      visible: Boolean(box && box.top >= -1 && box.top < window.innerHeight),
+    };
+  });
+  check(
+    '解锁入口跳到保险箱',
+    jumped.hash === '#vault' && jumped.panel && jumped.visible,
+    JSON.stringify(jumped),
+  );
+  await vaultPage.screenshot({ path: path.join(shots, '06-vault-locked.png') });
+
+  await vaultContext.close();
+
+  // AI cursor mode: native cursor hidden, shake opens the in-page menu,
+  // highlight stays on the current spread, keyboard is a full alternative,
+  // and Escape restores the native pointer.
+  const cursorContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  cursorContext.setDefaultTimeout(12_000);
+  const cursorPage = await cursorContext.newPage();
+  cursorPage.on('pageerror', (error) => errors.push(`cursor pageerror: ${error.message}`));
+  cursorPage.on('console', (message) => {
+    if (message.type() === 'error') errors.push(`cursor console: ${message.text()}`);
+  });
+  await cursorPage.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  await cursorPage.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-intro-chrome].is-revealed').length === 2 &&
+      document.querySelectorAll('[data-slide-reveal].is-revealed').length >= 5,
+    null,
+    { timeout: 25_000 },
+  );
+  await cursorPage.waitForTimeout(300);
+  const cursorInitial = await cursorPage.evaluate(() => ({
+    mode: document.documentElement.classList.contains('cursor-ai-mode'),
+    pointer: document.querySelector('.cursor-mode-pointer')?.classList.contains('is-visible'),
+    cursor: getComputedStyle(document.body).cursor,
+    pill: Boolean(document.querySelector('.cursor-mode-pill')),
+  }));
+  check(
+    'AI 光标模式默认开启并隐藏原生鼠标',
+    cursorInitial.mode && cursorInitial.pointer && cursorInitial.cursor === 'none' && cursorInitial.pill,
+    JSON.stringify(cursorInitial),
+  );
+
+  await cursorPage.mouse.move(420, 440);
+  await cursorPage.mouse.move(920, 440);
+  await cursorPage.waitForTimeout(20);
+  const motionState = await cursorPage.evaluate(() => {
+    const cursor = document.querySelector('.cursor-mode-pointer');
+    const style = cursor ? getComputedStyle(cursor) : null;
+    const box = cursor?.getBoundingClientRect();
+    return {
+      offset: Number.parseFloat(style?.getPropertyValue('--cursor-offset') || '0'),
+      x: box?.x ?? 0,
+      tail: Boolean(document.querySelector('.cursor-mode-pointer__tail')),
+    };
+  });
+  check(
+    '划动时光标往反方向偏移',
+    !motionState.tail && motionState.offset > 0 && motionState.offset <= 4.1 && motionState.x < 919.5,
+    JSON.stringify(motionState),
+  );
+  await cursorPage.waitForTimeout(160);
+  const motionSettled = await cursorPage.evaluate(() => {
+    const cursor = document.querySelector('.cursor-mode-pointer');
+    const box = cursor?.getBoundingClientRect();
+    return {
+      offset: Number.parseFloat(
+        cursor ? getComputedStyle(cursor).getPropertyValue('--cursor-offset') || '0' : '0',
+      ),
+      x: box?.x ?? 0,
+    };
+  });
+  check(
+    '停下后立即对齐且不再晃动',
+    motionSettled.offset === 0 && Math.abs(motionSettled.x - 920) < 0.75,
+    JSON.stringify(motionSettled),
+  );
+
+  await cursorPage.mouse.move(700, 380);
+  for (const x of [760, 700, 760, 700, 760]) {
+    await cursorPage.mouse.move(x, 380);
+    await cursorPage.waitForTimeout(55);
+  }
+  await cursorPage.waitForTimeout(200);
+  const shakeState = await cursorPage.evaluate(() => ({
+    menu: Boolean(document.querySelector('.cursor-mode-menu')),
+    positioned: document.querySelector('.cursor-mode-menu')?.classList.contains('is-positioned'),
+  }));
+  check('晃动鼠标打开页内 AI 菜单', shakeState.menu && shakeState.positioned, JSON.stringify(shakeState));
+  const layerState = await cursorPage.evaluate(() => {
+    const pointer = document.querySelector('.cursor-mode-pointer');
+    const menu = document.querySelector('.cursor-mode-menu');
+    return {
+      pointer: pointer ? Number.parseInt(getComputedStyle(pointer).zIndex, 10) : 0,
+      menu: menu ? Number.parseInt(getComputedStyle(menu).zIndex, 10) : 0,
+    };
+  });
+  check(
+    'AI 光标位于菜单之上',
+    layerState.pointer > layerState.menu,
+    JSON.stringify(layerState),
+  );
+  await cursorPage.screenshot({ path: path.join(shots, '07-cursor-menu.png') });
+
+  await cursorPage.getByRole('button', { name: '高亮标题' }).click();
+  await cursorPage.waitForTimeout(800);
+  const highlightState = await cursorPage.evaluate(() => ({
+    highlight: document.querySelector('.cursor-mode-highlight')?.classList.contains('is-visible'),
+    label: document.querySelector('.cursor-mode-highlight span')?.textContent || '',
+    url: location.pathname,
+  }));
+  check(
+    'AI 菜单高亮当前页标题',
+    highlightState.highlight && highlightState.label.includes('AI 光标') && highlightState.url === '/',
+    JSON.stringify(highlightState),
+  );
+
+  await cursorPage.keyboard.press('Alt+Shift+K');
+  await cursorPage.waitForTimeout(200);
+  check(
+    '键盘可以打开 AI 菜单',
+    await cursorPage.locator('.cursor-mode-menu').isVisible(),
+  );
+
+  // No model in the test environment: the same input must still be understood
+  // by the local fallback instead of ending at "没听懂".
+  await cursorPage.route('**/api/cursor/plan', (route) =>
+    route.fulfill({
+      status: 412,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '尚未配置文本模型' }),
+    }),
+  );
+  const cursorComposer = cursorPage.locator('.cursor-mode-menu__composer input');
+  await cursorComposer.fill('打开文本创作，写一个城市夜晚的提纲');
+  await cursorComposer.press('Enter');
+  await cursorPage.waitForURL('**/studio/create?tab=text', { timeout: 10_000 });
+  await cursorPage.waitForTimeout(700);
+  const understood = await cursorPage.evaluate(() => ({
+    url: location.pathname + location.search,
+    prompt: (document.querySelector('[data-cursor-id="create.prompt"]'))?.value ?? '',
+    cursor: document.documentElement.classList.contains('cursor-ai-mode'),
+  }));
+  check(
+    '对话框输入能被理解并执行',
+    understood.url.includes('/studio/create?tab=text') &&
+      understood.prompt.includes('城市夜晚') &&
+      understood.cursor,
+    JSON.stringify(understood),
+  );
+  check('AI 菜单可以打开站内文本创作', cursorPage.url().includes('/studio/create?tab=text'));
+
+  await cursorPage.keyboard.press('Escape');
+  await cursorPage.waitForTimeout(250);
+  const cursorRestored = await cursorPage.evaluate(() => ({
+    mode: document.documentElement.classList.contains('cursor-ai-mode'),
+    cursor: getComputedStyle(document.body).cursor,
+  }));
+  check(
+    'Escape 恢复原生鼠标',
+    !cursorRestored.mode && cursorRestored.cursor !== 'none',
+    JSON.stringify(cursorRestored),
+  );
+  await cursorContext.close();
 
   const realErrors = errors.filter((line) => !/favicon|manifest|Download the React DevTools/i.test(line));
   check('运行过程无控制台错误', realErrors.length === 0, realErrors.slice(0, 3).join(' | '));

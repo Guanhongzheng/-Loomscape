@@ -5,9 +5,9 @@ import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes 
 import { cn } from '@/lib/cn';
 
 const fieldBase =
-  'w-full rounded-xl bg-[rgb(var(--sunken))] px-3.5 text-sm text-ink placeholder:text-muted/55 ' +
-  'shadow-[var(--shadow-inset-sm)] outline-none transition-shadow duration-300 ' +
-  'focus:shadow-[var(--shadow-inset),0_0_0_2px_rgba(38,62,92,0.18)]';
+  'w-full rounded-xl border border-white/70 bg-white/55 px-3.5 text-[13px] text-ink placeholder:text-muted/60 backdrop-blur-xl ' +
+  'outline-none transition-[border-color,box-shadow,background-color] duration-300 ' +
+  'focus:border-white/80 focus:bg-white/70 focus:shadow-[0_0_0_3px_rgb(var(--accent)/0.1)]';
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className, ...props }, ref) {
@@ -29,7 +29,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         className={cn(fieldBase, 'h-11 appearance-none pr-9', className)}
         style={{
           backgroundImage:
-            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%236a7484' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E\")",
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5' fill='none' stroke='%235e564a' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E\")",
           backgroundRepeat: 'no-repeat',
           backgroundPosition: 'right 0.9rem center',
         }}
@@ -44,7 +44,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
 export function Label({ children, className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label
-      className={cn('mb-2 block text-[12px] font-medium tracking-wide text-muted', className)}
+      className={cn('mb-2 block text-[12.5px] font-medium tracking-wide text-muted', className)}
       {...props}
     >
       {children}

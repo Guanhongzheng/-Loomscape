@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { PRESETS, type Endpoint } from '@/lib/providers';
 
-const fieldLabel = 'mb-1.5 block text-[10.5px] text-muted';
+const fieldLabel = 'mb-1.5 block text-[11.5px] text-muted';
 
 /**
  * The cloud text endpoint form. State stays in the panel because the status
@@ -32,7 +32,7 @@ export function CloudEndpointForm({
   const patch = (next: Partial<Endpoint>) => onChange({ ...draft, ...next });
 
   return (
-    <div className="rounded-xl px-4 py-4 shadow-[var(--shadow-inset-sm)]">
+    <div className="rounded-xl border border-white/45 bg-white/30 px-4 py-4 backdrop-blur-md">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <div>
           <label className={fieldLabel}>服务商</label>
@@ -49,7 +49,7 @@ export function CloudEndpointForm({
                 model: next.models[0] ?? draft.model,
               });
             }}
-            className="h-9 text-[12px]"
+            className="h-9 text-[12.5px]"
           >
             {PRESETS.text.map((item) => (
               <option key={item.id} value={item.id}>
@@ -65,7 +65,7 @@ export function CloudEndpointForm({
             <Select
               value={preset.models.includes(draft.model) ? draft.model : preset.models[0]}
               onChange={(event) => patch({ model: event.target.value })}
-              className="h-9 text-[12px]"
+              className="h-9 text-[12.5px]"
             >
               {preset.models.map((model) => (
                 <option key={model} value={model}>
@@ -78,7 +78,7 @@ export function CloudEndpointForm({
               value={draft.model}
               onChange={(event) => patch({ model: event.target.value })}
               placeholder="model-id"
-              className="h-9 font-mono text-[11.5px]"
+              className="h-9 font-mono text-[12px]"
               spellCheck={false}
             />
           )}
@@ -91,7 +91,7 @@ export function CloudEndpointForm({
             value={draft.apiKey}
             onChange={(event) => patch({ apiKey: event.target.value })}
             placeholder={draft.shape === 'anthropic-chat' ? 'sk-ant-...' : 'sk-...'}
-            className="h-9 font-mono text-[11.5px]"
+            className="h-9 font-mono text-[12px]"
             spellCheck={false}
             autoComplete="off"
           />
@@ -103,7 +103,7 @@ export function CloudEndpointForm({
             value={draft.baseUrl}
             onChange={(event) => patch({ baseUrl: event.target.value })}
             placeholder="https://api.example.com/v1"
-            className="h-9 font-mono text-[11.5px]"
+            className="h-9 font-mono text-[12px]"
             spellCheck={false}
           />
         </div>
@@ -118,7 +118,7 @@ export function CloudEndpointForm({
           {testing ? <Loader2 size={11} className="animate-spin" /> : null}
           测试连接
         </Button>
-        <span className="text-[10.5px] text-muted/60">
+        <span className="text-[11px] text-muted/70">
           密钥只写进本机 IndexedDB，请求经 /api/chat 转发，不落盘。
         </span>
       </div>

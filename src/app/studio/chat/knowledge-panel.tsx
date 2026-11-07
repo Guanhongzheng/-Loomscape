@@ -42,17 +42,17 @@ export function KnowledgePanel({
           value={title}
           onChange={(event) => onTitle(event.target.value)}
           placeholder="资料标题，例如：品牌手册"
-          className="h-9 text-[12px]"
+          className="h-9 text-[13px]"
         />
         <Textarea
           rows={5}
           value={note}
           onChange={(event) => onNote(event.target.value)}
           placeholder="粘贴需要记住的内容。会自动分段并编号，长文也可以。"
-          className="text-[12px]"
+          className="text-[13px]"
         />
         <div className="flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] text-muted/60">
+          <span className="font-mono text-[10.5px] text-muted/70">
             {note.trim() ? `${note.trim().length} 字` : '空闲'}
           </span>
           <Button variant="soft" size="sm" onClick={onImport} disabled={importing}>
@@ -71,7 +71,7 @@ export function KnowledgePanel({
         />
 
         {docs.length === 0 ? (
-          <p className="text-[11px] leading-relaxed text-muted/70">
+          <p className="text-[11.5px] leading-relaxed text-muted/75">
             还没有资料。导入后，提问时会先命中这里的内容。
           </p>
         ) : (
@@ -79,12 +79,12 @@ export function KnowledgePanel({
             {docs.map((doc) => (
               <li
                 key={doc.docId}
-                className="flex items-start gap-2 rounded-xl px-3 py-2 shadow-[var(--shadow-inset-sm)]"
+                className="flex items-start gap-2 rounded-xl border border-white/50 bg-white/35 px-3 py-2 backdrop-blur-md"
               >
-                <FileText size={13} className="mt-0.5 shrink-0 text-muted/70" />
+                <FileText size={13} className="mt-0.5 shrink-0 text-muted/75" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[11.5px] text-ink/85">{doc.title}</div>
-                  <div className="font-mono text-[9.5px] text-muted/60">
+                  <div className="truncate text-[12.5px] text-ink/90">{doc.title}</div>
+                  <div className="font-mono text-[10px] text-muted/65">
                     {doc.chunks} 段 · {doc.chars} 字
                   </div>
                 </div>

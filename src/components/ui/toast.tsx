@@ -57,8 +57,8 @@ export function Toaster() {
               exit={{ opacity: 0, y: 6, scale: 0.98 }}
               transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
               className={cn(
-                'pointer-events-auto flex items-center gap-2.5 rounded-full bg-[rgb(var(--paper))] px-4 py-2.5',
-                'text-[12.5px] shadow-[0_18px_40px_-12px_rgba(30,40,56,0.4),inset_0_1px_0_rgba(255,255,255,0.9)]',
+                'pointer-events-auto flex items-center gap-2.5 rounded-full border border-white/60 bg-white/70 px-4 py-2.5 backdrop-blur-xl',
+                'text-[12.5px] shadow-[0_18px_40px_-12px_rgba(44,36,26,0.35),inset_0_1px_0_rgba(255,255,255,0.9)]',
                 item.tone === 'error' ? 'text-[#8c3b32]' : 'text-ink',
               )}
             >

@@ -209,7 +209,7 @@ export default function VideoWorkbench() {
                   >
                     {playing ? <Pause size={13} /> : <Play size={13} />}
                   </button>
-                  <span className="font-mono text-[10.5px] tabular-nums text-white/85">
+                  <span className="font-mono text-[11px] tabular-nums text-white/85">
                     {clock(position)} / {clock(source.duration)}
                   </span>
                   <span className="ml-auto truncate font-mono text-[10px] text-white/55">
@@ -233,13 +233,13 @@ export default function VideoWorkbench() {
                           : 'hover:bg-[rgb(var(--surface))]/60',
                       )}
                     >
-                      <span className="font-mono text-[9.5px] text-muted/60">
+                      <span className="font-mono text-[10px] text-muted/60">
                         {String(index + 1).padStart(2, '0')}
                       </span>
-                      <span className="font-mono text-[10.5px] tabular-nums text-ink/75">
+                      <span className="font-mono text-[11px] tabular-nums text-ink/75">
                         {clock(clip.from)} — {clock(clip.to)}
                       </span>
-                      <span className="ml-auto font-mono text-[9.5px] text-muted/50">
+                      <span className="ml-auto font-mono text-[10px] text-muted/50">
                         {(clip.to - clip.from).toFixed(1)}s
                       </span>
                     </button>
@@ -300,7 +300,7 @@ export default function VideoWorkbench() {
                           clip.id === activeId ? 'bg-[rgb(var(--copper))]' : 'bg-[rgb(var(--line))]',
                         )}
                       />
-                      <span className="absolute inset-0 grid place-items-center font-mono text-[9.5px] text-muted/70">
+                      <span className="absolute inset-0 grid place-items-center font-mono text-[10px] text-muted/70">
                         {(clip.to - clip.from).toFixed(1)}s
                       </span>
                     </button>
@@ -349,7 +349,7 @@ export default function VideoWorkbench() {
               />
             </div>
 
-            <p className="mt-4 text-[10.5px] leading-relaxed text-muted/70">
+            <p className="mt-4 text-[11px] leading-relaxed text-muted/70">
               工程文件只记录片段区间，不包含视频本体。重新打开时需要再导入同一条源片。
             </p>
           </Panel>

@@ -144,11 +144,13 @@ export default function ImageWorkbench() {
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               placeholder="例如：亚麻质感的织物特写，侧逆光，冷灰与铜色，极简构图"
+              data-cursor-id="create.prompt"
+              data-cursor-label="图像提示词"
             />
 
             <div className="mt-4 space-y-4">
               <div>
-                <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">比例</div>
+                <div className="mb-2 text-[12.5px] font-medium tracking-wide text-muted">比例</div>
                 <Segmented
                   size="sm"
                   value={aspect}
@@ -158,7 +160,7 @@ export default function ImageWorkbench() {
               </div>
 
               <div>
-                <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">数量</div>
+                <div className="mb-2 text-[12.5px] font-medium tracking-wide text-muted">数量</div>
                 <Segmented
                   size="sm"
                   value={count}
@@ -183,7 +185,7 @@ export default function ImageWorkbench() {
               {busy ? '正在出图' : '生成'}
             </Button>
 
-            <p className="mt-3 text-[10.5px] leading-relaxed text-muted/70">
+            <p className="mt-3 text-[11px] leading-relaxed text-muted/70">
               {live
                 ? `使用 ${endpoints.image.model}，单次最多 4 张。`
                 : '未配置图像端点：画布由本地程序化生成，适合先定构图与色调。'}
@@ -192,7 +194,7 @@ export default function ImageWorkbench() {
 
           <Panel title="归档" hint="保存的画面会压缩到 640px">
             {archive.length === 0 ? (
-              <p className="text-[11.5px] text-muted/75">还没有归档的画面。</p>
+              <p className="text-[12px] text-muted/75">还没有归档的画面。</p>
             ) : (
               <div className="grid grid-cols-3 gap-2">
                 {archive.map((item) => {

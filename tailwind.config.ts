@@ -16,16 +16,26 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'ui-sans-serif',
+          '"Microsoft YaHei"',
+          '"微软雅黑"',
+          '"Microsoft YaHei UI"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Source Han Sans SC"',
           'system-ui',
-          '-apple-system',
-          'Segoe UI',
-          'PingFang SC',
-          'Hiragino Sans GB',
-          'Microsoft YaHei',
           'sans-serif',
         ],
-        serif: ['Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', 'STSong', 'SimSun', 'serif'],
+        // The workbench no longer relies on a serif display face: YaHei is the
+        // house face, and hierarchy comes from weight, size and tracking.
+        serif: [
+          '"Microsoft YaHei"',
+          '"微软雅黑"',
+          '"Microsoft YaHei UI"',
+          '"PingFang SC"',
+          '"Hiragino Sans GB"',
+          '"Source Han Sans SC"',
+          'sans-serif',
+        ],
         mono: ['ui-monospace', 'SFMono-Regular', 'JetBrains Mono', 'Menlo', 'Consolas', 'monospace'],
       },
       boxShadow: {

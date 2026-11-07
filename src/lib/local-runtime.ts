@@ -22,6 +22,7 @@ import {
   type ResidentInfo,
 } from './engines';
 import { describeError } from './errors';
+import { createDownloadProgress } from './download-progress';
 import { residentCap, threadCap } from './scheduling';
 import { createReasoningFilter, createStopFilter, promptFor } from './local-prompts';
 import { isWeightRequest, weightFile, weightShards } from './weights';
@@ -526,13 +527,27 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
   }
 
   const runtimeStore = useModelRuntime.getState();
-  if (options.report) runtimeStore.set(model.id, { state: 'downloading', progress: 0, backend });
+  if (options.report) {
+    // A retry starts a new attempt: drop the previous file and byte count
+    // instead of showing them next to a 0% bar.
+    runtimeStore.set(model.id, {
+      state: 'downloading',
+      progress: 0,
+      file: undefined,
+      loaded: undefined,
+      total: undefined,
+      backend,
+    });
+  }
   markAttempt(model.id);
   // Weights are worthless if the browser evicts them under pressure, which is
   // exactly what would force the same download again next visit.
   void ensurePersistentStorage();
 
-  const totals = new Map<string, { loaded: number; total: number }>();
+  // The catalogue knows the finished weight size, which is used as a floor for
+  // the denominator. Without it, a sharded model would jump back at every new
+  // file ("90% → 45%") because only the files seen so far are counted.
+  const tracker = createDownloadProgress(model.sizesMB[dtype] * 1024 * 1024);
 
   const onProgress = (event: {
     status: string;
@@ -541,40 +556,9 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     total?: number;
   }) => {
     if (!options.report) return;
-    if (event.file && typeof event.total === 'number' && event.total > 0) {
-      totals.set(event.file, {
-        loaded: event.status === 'done' ? event.total : (event.loaded ?? 0),
-        total: event.total,
-      });
-      let loaded = 0;
-      let total = 0;
-      totals.forEach((row) => {
-        loaded += Math.min(row.loaded, row.total);
-        total += row.total;
-      });
-      // A sharded model starts each `_data` file only after the previous one
-      // finishes, so a denominator built from "files seen so far" makes the bar
-      // jump backwards at every shard boundary (90% → 45%). The catalogue knows
-      // the finished weight size, so use it as the floor: progress then tracks
-      // the whole download and the label reads 1.4 / 2.2 GB across shards.
-      const expected = model.sizesMB[dtype] * 1024 * 1024;
-      const denominator = Math.max(total, expected);
-      runtimeStore.set(model.id, {
-        state: 'downloading',
-        progress: denominator > 0 ? Math.min(loaded / denominator, 0.999) : 0,
-        file: event.file,
-        loaded,
-        total: denominator,
-        backend,
-      });
-    } else if (event.status === 'initiate' && event.file) {
-      runtimeStore.set(model.id, {
-        state: 'downloading',
-        progress: runtimeStore.models[model.id]?.progress ?? 0,
-        file: event.file,
-        backend,
-      });
-    }
+    const snapshot = tracker.apply(event);
+    if (!snapshot) return;
+    runtimeStore.set(model.id, { state: 'downloading', ...snapshot, backend });
   };
 
   const task = (async () => {
@@ -603,7 +587,14 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     recordResident(next, key);
 
     if (options.report) {
-      runtimeStore.set(model.id, { state: 'ready', progress: 1, backend, total: 0, loaded: 0 });
+      runtimeStore.set(model.id, {
+        state: 'ready',
+        progress: 1,
+        backend,
+        file: undefined,
+        total: 0,
+        loaded: 0,
+      });
     }
     return { pipe, backend };
   } catch (error) {
@@ -613,9 +604,16 @@ async function acquire(model: LocalModel, options: LoadOptions): Promise<{ pipe:
     // otherwise the tab blocks its own retry.
     releaseModelLock(model.id);
     if (options.report) {
+      // Keep where the transfer stopped. A card that resets to 0% throws away
+      // the one number that tells the user whether retrying is cheap or means
+      // another 500MB; `ready` is still the only state with progress 1.
+      const snapshot = tracker.snapshot();
       runtimeStore.set(model.id, {
         state: 'error',
-        progress: 0,
+        progress: snapshot.progress,
+        file: snapshot.file,
+        loaded: snapshot.loaded,
+        total: snapshot.total,
         backend,
         message: describeError(error),
       });
@@ -777,6 +775,7 @@ export async function streamLocal(options: {
   model: LocalModel;
   source: ModelSource;
   backendPreference: 'auto' | Backend;
+  precision?: GpuPrecision;
   system: string;
   turns: Array<{ role: string; content: string }>;
   maxTokens?: number;
@@ -788,6 +787,7 @@ export async function streamLocal(options: {
   const { pipe, backend } = await loadPipeline(options.model, {
     source: options.source,
     backendPreference: options.backendPreference,
+    precision: options.precision,
     report: true,
   });
 

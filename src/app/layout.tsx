@@ -3,27 +3,28 @@ import './globals.css';
 import { Toaster } from '@/components/ui/toast';
 import { ServiceWorker } from '@/components/service-worker';
 import { MotionProvider } from '@/components/motion-provider';
+import { CursorMode } from '@/components/cursor/cursor-mode';
 
 export const metadata: Metadata = {
   title: {
-    default: '织境 Loomscape · 多模态创意工作台',
+    default: '织境 Loomscape · 浏览器 AI 光标',
     template: '%s · 织境',
   },
   description:
-    '把文字、画面、声音与时间放进同一张工作台。从一句提纲到一支成片，本地优先，配置与作品留在浏览器。',
+    '一个看得见、可暂停、可接管的浏览器 AI 光标。找到按钮、填写表单、滚动页面，危险动作先确认。',
   applicationName: 'Loomscape',
   authors: [{ name: 'Loomscape' }],
   keywords: ['创意工具', '工作台', '文本', '图像', '声音', '影像', 'Loomscape'],
   manifest: '/manifest.webmanifest',
   openGraph: {
-    title: '织境 Loomscape',
-    description: '把散落的材料，织成一件作品。',
+    title: '织境 Loomscape · 浏览器 AI 光标',
+    description: '让 AI 光标，替你在浏览器里做事。',
     type: 'website',
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#edf0f4',
+  themeColor: '#efe6d9',
   width: 'device-width',
   initialScale: 1,
 };
@@ -42,6 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-[100dvh] font-sans antialiased">
         <MotionProvider>
           {children}
+          <CursorMode />
           <Toaster />
         </MotionProvider>
         <ServiceWorker />

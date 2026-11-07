@@ -53,6 +53,17 @@ const KIND_LABEL: Record<string, string> = {
   doc: '资料',
 };
 
+const SECTION_LINKS: Array<{ id: string; label: string }> = [
+  { id: 'engine', label: '引擎' },
+  { id: 'models', label: '本地模型' },
+  { id: 'vault', label: '密钥保险箱' },
+  { id: 'scheduling', label: '调度策略' },
+  { id: 'endpoints', label: '其它端点' },
+  { id: 'memory', label: '记忆' },
+  { id: 'data', label: '本地数据' },
+  { id: 'about', label: '关于' },
+];
+
 export default function SettingsPage() {
   const { user, logout } = useAuth();
   const endpoints = useEndpoints((state) => state.endpoints);
@@ -168,6 +179,10 @@ export default function SettingsPage() {
     window.location.href = '/';
   };
 
+  /** The workbench scrolls inside <main>, not the document. */
+  const jump = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
   return (
     <div>
       <WorkbenchHeader
@@ -176,10 +191,37 @@ export default function SettingsPage() {
         description="端点、密钥、记忆与本地模型都在这一页，只写入本机浏览器。"
       />
 
-      <div className="space-y-5">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[200px_minmax(0,1fr)]">
+        <nav aria-label="设置分区" className="hidden xl:block">
+          <div className="sticky top-6 space-y-1 rounded-2xl border border-white/55 bg-white/45 p-2 shadow-[var(--shadow-neu-sm)] backdrop-blur-2xl">
+            <p className="px-3 pb-2 pt-1 font-mono text-[9px] uppercase tracking-[0.26em] text-muted/45">
+              设置
+            </p>
+            {SECTION_LINKS.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => jump(item.id)}
+                className="flex w-full items-baseline gap-2.5 rounded-lg px-3 py-2 text-left text-[12.5px] text-muted transition-colors hover:bg-[rgb(var(--sunken))]/55 hover:text-ink"
+              >
+                <span className="font-mono text-[9px] text-muted/40">
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+
+        <div className="min-w-0 space-y-6">
         <EnginePanel />
 
-        <Panel title="其它端点" hint="嵌入、图像与语音通道；文本引擎在上方配置">
+        <Panel
+          id="endpoints"
+          title="其它端点"
+          hint="嵌入、图像与语音通道；文本引擎在上方配置"
+          className="scroll-mt-6"
+        >
           <div className="divide-y divide-[rgb(var(--line))]/45">
             {CHANNELS.map((channel) => {
               const draft = drafts[channel.id];
@@ -196,11 +238,11 @@ export default function SettingsPage() {
                     aria-expanded={open}
                     className="flex w-full items-center gap-3 py-3 text-left"
                   >
-                    <span className="w-10 shrink-0 text-[12px] text-ink/85">{channel.title}</span>
-                    <span className="min-w-0 flex-1 truncate text-[11px] text-muted/70">
+                    <span className="w-10 shrink-0 text-[13px] text-ink/90">{channel.title}</span>
+                    <span className="min-w-0 flex-1 truncate text-[11.5px] text-muted/80">
                       {channel.note}
                     </span>
-                    <span className="flex shrink-0 items-center gap-1.5 text-[10.5px] text-muted/70">
+                    <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted/80">
                       <span
                         className={cn(
                           'h-1.5 w-1.5 rounded-full',
@@ -219,11 +261,11 @@ export default function SettingsPage() {
                     <div className="pb-5 sm:pl-[52px]">
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                         <div>
-                          <label className="mb-1.5 block text-[10.5px] text-muted">服务商</label>
+                          <label className="mb-1.5 block text-[11.5px] text-muted">服务商</label>
                           <Select
                             value={draft.preset}
                             onChange={(event) => applyPreset(channel.id, event.target.value)}
-                            className="h-9 text-[12px]"
+                            className="h-9 text-[12.5px]"
                           >
                             {PRESETS[channel.id].map((item) => (
                               <option key={item.id} value={item.id}>
@@ -234,12 +276,12 @@ export default function SettingsPage() {
                         </div>
 
                         <div>
-                          <label className="mb-1.5 block text-[10.5px] text-muted">模型</label>
+                          <label className="mb-1.5 block text-[11.5px] text-muted">模型</label>
                           <Input
                             value={draft.model}
                             onChange={(event) => update(channel.id, { model: event.target.value })}
                             placeholder={preset?.models[0] ?? 'model-id'}
-                            className="h-9 font-mono text-[11.5px]"
+                            className="h-9 font-mono text-[12px]"
                             list={`models-${channel.id}`}
                             spellCheck={false}
                           />
@@ -251,12 +293,12 @@ export default function SettingsPage() {
                         </div>
 
                         <div>
-                          <label className="mb-1.5 block text-[10.5px] text-muted">Base URL</label>
+                          <label className="mb-1.5 block text-[11.5px] text-muted">Base URL</label>
                           <Input
                             value={draft.baseUrl}
                             onChange={(event) => update(channel.id, { baseUrl: event.target.value })}
                             placeholder="https://api.example.com/v1"
-                            className="h-9 font-mono text-[11.5px]"
+                            className="h-9 font-mono text-[12px]"
                             spellCheck={false}
                           />
                         </div>
@@ -296,14 +338,14 @@ export default function SettingsPage() {
             })}
           </div>
 
-          <p className="mt-4 text-[10.5px] leading-relaxed text-muted/60">
+          <p className="mt-4 text-[11px] leading-relaxed text-muted/70">
             密钥只写进本机 IndexedDB。请求经 /api/chat 转发时只存在于内存，不落盘、不写日志。
             每次转发都会校验目标地址，内网与回环地址会被拒绝。
           </p>
         </Panel>
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          <Panel title="记忆" hint={`${memories.length} 条`}>
+          <Panel id="memory" title="记忆" hint={`${memories.length} 条`} className="scroll-mt-6">
             <Switch
               checked={memoryEnabled}
               onChange={(next) => {
@@ -333,20 +375,20 @@ export default function SettingsPage() {
 
             <div className="mt-5 max-h-[220px] space-y-2 overflow-y-auto pr-1">
               {memories.length === 0 ? (
-                <p className="text-[11.5px] text-muted/70">还没有记忆片段。</p>
+                <p className="text-[12px] text-muted/75">还没有记忆片段。</p>
               ) : (
                 memories.map((memory) => (
                   <div
                     key={memory.id}
                     className="group flex items-start gap-2.5 rounded-lg px-2.5 py-2 shadow-[var(--shadow-inset-sm)]"
                   >
-                    <span className="mt-[2px] shrink-0 font-mono text-[9px] uppercase tracking-wide text-[rgb(var(--copper))]/80">
+                    <span className="mt-[2px] shrink-0 font-mono text-[9.5px] uppercase tracking-wide text-[rgb(var(--copper))]/85">
                       {KIND_LABEL[memory.kind] ?? memory.kind}
                     </span>
-                    <p className="line-clamp-2 flex-1 text-[11.5px] leading-relaxed text-ink/75">
+                    <p className="line-clamp-2 flex-1 text-[12px] leading-relaxed text-ink/80">
                       {memory.text}
                     </p>
-                    <span className="shrink-0 font-mono text-[9px] text-muted/50">
+                    <span className="shrink-0 font-mono text-[9.5px] text-muted/60">
                       {relativeTime(memory.createdAt)}
                     </span>
                     <button
@@ -380,7 +422,7 @@ export default function SettingsPage() {
             ) : null}
           </Panel>
 
-          <Panel title="本地数据" hint="浏览器 IndexedDB">
+          <Panel id="data" title="本地数据" hint="浏览器 IndexedDB" className="scroll-mt-6">
             <div className="space-y-3">
               <div className="flex items-baseline justify-between">
                 <span className="text-[11.5px] text-muted">已用空间</span>
@@ -429,8 +471,13 @@ export default function SettingsPage() {
           </Panel>
         </div>
 
-        <Panel title="关于" hint={`v${process.env.NEXT_PUBLIC_APP_VERSION ?? '0.3'} · 本地优先`}>
-          <div className="grid grid-cols-1 gap-4 text-[11px] leading-relaxed text-muted md:grid-cols-2">
+        <Panel
+          id="about"
+          title="关于"
+          hint={`v${process.env.NEXT_PUBLIC_APP_VERSION ?? '0.3'} · 本地优先`}
+          className="scroll-mt-6"
+        >
+          <div className="grid grid-cols-1 gap-4 text-[11.5px] leading-relaxed text-muted md:grid-cols-2">
             <p>
               <span className="text-ink/85">已有</span>：文本流式起草、图像生成与程序化兜底、
               录音转写、时间线裁切、分镜编排、本地账户与记忆检索。
@@ -441,6 +488,7 @@ export default function SettingsPage() {
             </p>
           </div>
         </Panel>
+        </div>
       </div>
 
       <Dialog
@@ -476,7 +524,7 @@ function SecretInput({ value, onChange }: { value: string; onChange: (next: stri
   const [visible, setVisible] = useState(false);
   return (
     <div>
-      <label className="mb-1.5 block text-[10.5px] text-muted">API Key</label>
+      <label className="mb-1.5 block text-[11.5px] text-muted">API Key</label>
       <div className="relative">
         <Input
           type={visible ? 'text' : 'password'}

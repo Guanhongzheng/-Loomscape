@@ -17,9 +17,9 @@ export default function GlobalError({
   return (
     <main className="grid min-h-[100dvh] place-items-center bg-[rgb(var(--paper))] px-6">
       <div className="max-w-md text-center">
-        <p className="font-mono text-[10px] uppercase tracking-[0.36em] text-muted">interrupted</p>
-        <h1 className="mt-4 font-serif text-[24px] text-ink">这一步没有走完</h1>
-        <p className="mt-3 text-[12.5px] leading-relaxed text-muted">
+        <p className="font-mono text-[10.5px] uppercase tracking-[0.36em] text-muted">interrupted</p>
+        <h1 className="mt-4 font-serif text-[30px] text-ink">这一步没有走完</h1>
+        <p className="mt-3 text-[13px] leading-relaxed text-muted">
           页面在渲染时中断了。已经写入本地的作品不受影响，可以重试这一步。
         </p>
         <div className="mt-7 flex justify-center gap-2">

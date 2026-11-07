@@ -89,7 +89,7 @@ export function Dialog({
       aria-hidden={!open}
     >
       <motion.div
-        className="absolute inset-0 bg-[rgba(28,35,46,0.22)] backdrop-blur-[6px]"
+        className="absolute inset-0 bg-[rgba(27,24,20,0.24)] backdrop-blur-[6px]"
         initial={{ opacity: 0 }}
         animate={{ opacity: open ? 1 : 0 }}
         transition={{ duration: open ? 0.25 : EXIT_MS / 1000 }}
@@ -102,8 +102,8 @@ export function Dialog({
         aria-label={title}
         tabIndex={-1}
         className={cn(
-          'relative w-full rounded-[26px] bg-[rgb(var(--paper))] p-7 outline-none',
-          'shadow-[0_40px_90px_-24px_rgba(28,38,54,0.45),inset_0_1px_0_rgba(255,255,255,0.9)]',
+          'relative w-full rounded-[26px] border border-white/60 bg-white/70 p-7 outline-none backdrop-blur-2xl',
+          'shadow-[0_40px_90px_-24px_rgba(44,36,26,0.42),inset_0_1px_0_rgba(255,255,255,0.9)]',
           width,
         )}
         initial={{ opacity: 0, y: 18, scale: 0.97 }}

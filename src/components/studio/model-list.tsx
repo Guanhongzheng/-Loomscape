@@ -47,8 +47,8 @@ export function ModelGroup({
   return (
     <div className="space-y-2.5">
       <div className="flex items-center gap-2.5">
-        <span className="text-[11px] text-muted/75">{title}</span>
-        <span className="h-px flex-1 bg-[rgb(var(--line))]/45" />
+        <span className="text-[11.5px] text-muted/85">{title}</span>
+        <span className="h-px flex-1 bg-[rgb(var(--line))]/60" />
       </div>
       <div className="space-y-2.5">
         {rows.map((model) => (
@@ -97,24 +97,31 @@ function ModelRow({
   const loading = state?.state === 'downloading';
   const failed = state?.state === 'error';
   const percent = Math.round((state?.progress ?? 0) * 100);
+  // A failure keeps the last byte count (P0-2). Showing it here is the
+  // difference between "try again" and "another 589MB": a multi-shard model
+  // reuses every file that finished, and only the file that stopped restarts.
+  const loaded = state?.loaded ?? 0;
+  const total = state?.total ?? 0;
+  const interrupted = failed && loaded > 0 && total > 0 && loaded < total;
+  const downloaded = failed && loaded > 0 && total > 0 && loaded >= total;
 
   return (
     <div
       data-model={model.id}
       data-loaded={loadedNow ? 'true' : 'false'}
       className={cn(
-        'rounded-xl px-4 py-3.5 shadow-[var(--shadow-inset-sm)]',
-        loadedNow && 'ring-1 ring-[rgb(var(--accent))]/25',
+        'rounded-xl border border-white/50 bg-white/35 px-4 py-4 backdrop-blur-md',
+        loadedNow && 'ring-1 ring-[rgb(var(--accent))]/20',
       )}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-[13px] text-ink/90">{model.label}</h4>
+            <h4 className="text-[14px] text-ink/95">{model.label}</h4>
             {blocked && !loadedNow ? (
-              <span className="text-[10px] text-muted/60">仅 WebGPU</span>
+              <span className="text-[10.5px] text-muted/70">仅 WebGPU</span>
             ) : loadedNow ? (
-              <span className="flex items-center gap-1 text-[10px] text-[#3f6b4f]">
+              <span className="flex items-center gap-1 text-[10.5px] text-[#3f6b4f]">
                 <Check size={11} />
                 已加载
                 {residentDtype && residentDtype !== dtype
@@ -122,17 +129,17 @@ function ModelRow({
                   : ''}
               </span>
             ) : ready ? (
-              <span className="text-[10px] text-muted/60">已下载</span>
+              <span className="text-[10.5px] text-muted/70">已下载</span>
             ) : otherReady && alternate ? (
-              <span className="text-[10px] text-muted/55">
+              <span className="text-[10.5px] text-muted/65">
                 仅有 {PRECISION_LABEL[alternate]} 权重
               </span>
             ) : leftovers ? (
-              <span className="text-[10px] text-muted/50">旧权重</span>
+              <span className="text-[10.5px] text-muted/60">旧权重</span>
             ) : null}
           </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted/85">{model.note}</p>
-          <p className="mt-1.5 text-[10.5px] text-muted/60">
+          <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted/90">{model.note}</p>
+          <p className="mt-1.5 text-[11px] text-muted/70">
             约{' '}
             {formatBytes(
               (blocked ? model.sizesMB.q4f16 : sizeFor(model, backend, precision)) * 1024 * 1024,
@@ -191,17 +198,17 @@ function ModelRow({
 
       {loading ? (
         <div className="mt-3">
-          <div className="mb-1.5 flex items-center justify-between font-mono text-[9.5px] text-muted/70">
+          <div className="mb-1.5 flex items-center justify-between font-mono text-[10px] text-muted/75">
             <span className="truncate pr-3">{state?.file ?? '准备中'}</span>
             <span className="tabular-nums">{percent}%</span>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full shadow-[var(--shadow-inset-sm)]">
+          <div className="h-1.5 overflow-hidden rounded-full bg-[rgb(var(--line))]/45">
             <div
-              className="h-full rounded-full bg-[rgb(var(--accent))]/70 transition-[width] duration-300"
+              className="h-full rounded-full bg-[rgb(var(--accent))] transition-[width] duration-300"
               style={{ width: `${Math.max(percent, 2)}%` }}
             />
           </div>
-          <div className="mt-1 flex justify-between font-mono text-[9px] text-muted/50">
+          <div className="mt-1 flex justify-between font-mono text-[10px] text-muted/60">
             <span>
               {formatBytes(state?.loaded)} / {formatBytes(state?.total)}
             </span>
@@ -212,12 +219,34 @@ function ModelRow({
 
       {failed ? (
         <div className="mt-3 space-y-2">
-          <div className="flex items-start gap-1.5 text-[10.5px] leading-relaxed text-[#8c3b32]">
-            <TriangleAlert size={11} className="mt-0.5 shrink-0" />
+          {interrupted ? (
+            <div>
+              <div className="mb-1 flex items-center justify-between font-mono text-[10px] text-[#8c3b32]/80">
+                <span className="truncate pr-3">{state?.file ?? '下载中断'}</span>
+                <span className="tabular-nums">{percent}%</span>
+              </div>
+              <div className="h-1 overflow-hidden rounded-full bg-[rgb(var(--line))]/45">
+                <div
+                  className="h-full rounded-full bg-[#a24a3f]/50"
+                  style={{ width: `${Math.max(percent, 2)}%` }}
+                />
+              </div>
+              <p className="mt-1 font-mono text-[10px] text-[#8c3b32]/65">
+                停在 {formatBytes(loaded)} / {formatBytes(total)}
+              </p>
+            </div>
+          ) : null}
+          {downloaded ? (
+            <p className="text-[11px] leading-relaxed text-[#8c3b32]/80">
+              权重已下载完成；失败发生在建会话阶段，重试会直接解析本地权重。
+            </p>
+          ) : null}
+          <div className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-[#8c3b32]">
+            <TriangleAlert size={12} className="mt-0.5 shrink-0" />
             <span className="min-w-0 break-words">{state?.message ?? '加载失败'}</span>
           </div>
           {looksLikeMemoryPressure(state?.message ?? '') ? (
-            <p className="text-[10px] leading-relaxed text-[#8c3b32]/75">
+            <p className="text-[11px] leading-relaxed text-[#8c3b32]/80">
               更像内存或存储不足：先关掉占用大的标签页，再重试。
             </p>
           ) : null}
@@ -226,12 +255,19 @@ function ModelRow({
               <RefreshCw size={11} />
               重试
             </Button>
-            {ready ? (
+            {ready || leftovers ? (
               <Button variant="ghost" size="sm" onClick={() => void onClearAndRetry(model)}>
                 删除缓存并重试
               </Button>
             ) : null}
           </div>
+          {!downloaded && total > 0 ? (
+            <p className="text-[11px] leading-relaxed text-[#8c3b32]/70">
+              {interrupted
+                ? '重试会从当前文件重新下载；已完成的文件会复用缓存，不会整包重下。'
+                : '重试会重新开始；已完成的文件会复用缓存，不会整包重下。'}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

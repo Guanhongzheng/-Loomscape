@@ -14,6 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/e2e.mjs",
+    "test:extension": "node scripts/test-extension.mjs",
+    "test:perf": "node scripts/perf.mjs",
     "check:runtime": "node scripts/check-runtime.mjs",
     "verify": "npm run lint && npm run typecheck && npm test"
   },

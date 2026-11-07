@@ -1,10 +1,19 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowRight, ArrowUpRight, CircleDot, Minus } from 'lucide-react';
-import { motion } from 'framer-motion';
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Eye,
+  ListTree,
+  Minus,
+  MousePointer2,
+  ShieldCheck,
+} from 'lucide-react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
+import { HomePreview } from './home-preview';
 
 const enter = {
   hidden: { opacity: 0, y: 18 },
@@ -17,80 +26,116 @@ const enter = {
 
 function Eyebrow({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.34em] text-muted">
+    <div className="flex items-center gap-3 font-mono text-[10.5px] uppercase tracking-[0.28em] text-muted">
       <span className="h-px w-8 bg-[rgb(var(--line))]" />
       {children}
     </div>
   );
 }
 
-const MATERIALS = [
-  { index: '01', name: '文本', detail: '提纲 · 成稿 · 语气' },
-  { index: '02', name: '图像', detail: '提示词 · 批量 · 导出' },
-  { index: '03', name: '声音', detail: '录制 · 转写 · 配音' },
-  { index: '04', name: '影像', detail: '裁切 · 编排 · 工程' },
-];
-
 export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse: () => void }) {
-  return (
-    <div className="relative mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 items-center gap-12 px-5 md:grid-cols-12 md:gap-12 md:px-8">
-      <div className="md:col-span-7">
-        <motion.div variants={enter} custom={0} initial="hidden" animate="show">
-          <Eyebrow>Multimodal workspace · 织境</Eyebrow>
-        </motion.div>
+  const reduceMotion = useReducedMotion();
 
-        <motion.h1
-          variants={enter}
-          custom={1}
-          initial="hidden"
-          animate="show"
-          className="mt-7 font-serif text-[clamp(2.7rem,4.9vw,5rem)] font-normal leading-[1.12] tracking-[0.005em] text-ink text-balance"
-        >
-          把散落的材料，
-          <br />
-          织成一件作品。
-        </motion.h1>
+  return (
+    <div className="relative mx-auto grid h-full w-full max-w-[1280px] grid-cols-1 items-center gap-6 px-5 md:grid-cols-12 md:gap-10 md:px-8">
+      <div className="md:col-span-7">
+        <div data-slide-reveal="hero-heading">
+          <motion.div
+            variants={enter}
+            custom={0}
+            initial="hidden"
+            animate="show"
+            className="hidden sm:block"
+          >
+            <Eyebrow>Browser AI cursor · 织境</Eyebrow>
+          </motion.div>
+
+          <motion.h1
+            variants={enter}
+            custom={1}
+            initial="hidden"
+            animate="show"
+            className="mt-4 max-w-[15ch] text-[clamp(2.7rem,4.5vw,4.5rem)] font-semibold leading-[1.16] tracking-[0.005em] text-ink text-balance sm:mt-6"          >
+            <span className="block overflow-hidden pb-[0.08em]">
+              <motion.span
+                className="block"
+                initial={reduceMotion ? false : { y: '108%' }}
+                animate={{ y: 0 }}
+                transition={{ delay: 0.12, duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+              >
+                让 AI 光标，
+              </motion.span>
+            </span>
+            <span className="block overflow-hidden pb-[0.08em]">
+              <motion.span
+                className="block"
+                initial={reduceMotion ? false : { y: '108%' }}
+                animate={{ y: 0 }}
+                transition={{ delay: 0.22, duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+              >
+                替你操作浏览器。
+              </motion.span>
+            </span>
+          </motion.h1>
+
+          <motion.span
+            aria-hidden="true"
+            initial={reduceMotion ? false : { scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={{ delay: 1.02, duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-4 block h-[3px] w-16 origin-left rounded-full bg-[rgb(var(--copper))]/70"
+          />
+        </div>
 
         <motion.p
+          data-slide-reveal="hero-copy"
           variants={enter}
           custom={2}
           initial="hidden"
           animate="show"
-          className="mt-7 max-w-[52ch] text-[15px] leading-[1.9] text-muted text-pretty"
+          className="mt-4 max-w-[46ch] text-[15px] leading-[1.9] text-muted text-pretty sm:mt-5"
         >
-          文字、画面、声音与时间，四种材料放在同一张工作台上。从一句提纲开始，到一支成片收尾，
-          中间不必换工具，也不必把半成品搬来搬去。
+          <span className="sm:hidden">一个看得见、可暂停的浏览器 AI 光标。</span>
+          <span className="hidden sm:inline">
+            它看得懂当前页面，会找到按钮、填写表单、滚动页面。每一步都看得见；危险动作先停下，你随时可以接管。
+          </span>
         </motion.p>
 
         <motion.div
+          data-slide-reveal="hero-actions"
           variants={enter}
           custom={3}
           initial="hidden"
           animate="show"
-          className="mt-10 flex flex-wrap items-center gap-3"
+          className="mt-7 flex flex-wrap items-center gap-3 sm:mt-9"
         >
           <Button variant="primary" size="lg" onClick={onEnter}>
             进入工作台
             <ArrowRight size={16} strokeWidth={1.8} />
           </Button>
           <Button variant="ghost" size="lg" onClick={onBrowse} className="px-4">
-            翻阅能力
+            看看它能做什么
           </Button>
         </motion.div>
 
         <motion.div
+          data-slide-reveal="hero-stats"
           variants={enter}
           custom={4}
           initial="hidden"
           animate="show"
-          className="mt-14 flex items-center gap-6 font-mono text-[10.5px] uppercase tracking-[0.22em] text-muted/75"
+          className="mt-9 hidden flex-wrap items-center gap-x-7 gap-y-2 border-t border-[rgb(var(--line))]/70 pt-5 sm:flex"
         >
-          <span className="flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--copper))]" />
-            本地优先
-          </span>
-          <span className="hidden sm:inline">滚轮 · 横向翻阅</span>
-          <span>v0.1</span>
+          {[
+            ['01', '当前页'],
+            ['00', '后台自动操作'],
+            ['100%', '可随时接管'],
+          ].map(([value, label]) => (
+            <span key={label} className="flex items-baseline gap-2">
+              <span className="font-mono text-[12px] tracking-wide text-ink">{value}</span>
+              <span className="text-[11.5px] text-muted/80">{label}</span>
+            </span>
+          ))}
         </motion.div>
       </div>
 
@@ -99,33 +144,10 @@ export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse
         custom={3}
         initial="hidden"
         animate="show"
-        className="hidden md:col-span-5 md:block"
+        data-slide-reveal="hero-preview"
+        className="md:col-span-5"
       >
-        <div className="neu grain relative overflow-hidden rounded-[26px] p-7">
-          <div className="flex items-center justify-between">
-            <span className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted">Index</span>
-            <span className="font-mono text-[10px] text-muted/70">04 材料</span>
-          </div>
-
-          <div className="mt-6 divide-y divide-[rgb(var(--line))]/60">
-            {MATERIALS.map((item) => (
-              <div key={item.index} className="group flex items-baseline gap-4 py-3.5">
-                <span className="font-mono text-[10px] text-muted/60">{item.index}</span>
-                <span className="font-serif text-[18px] text-ink">{item.name}</span>
-                <span className="ml-auto text-[11.5px] tracking-wide text-muted/80">{item.detail}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-6 flex items-center gap-2 border-t border-[rgb(var(--line))]/60 pt-4 text-[11px] text-muted">
-            <CircleDot size={11} className="text-[rgb(var(--copper))]" />
-            未连接模型服务时，工作台仍可完成一次离线走查
-          </div>
-        </div>
-
-        <p className="mt-4 pl-1 font-mono text-[10px] uppercase tracking-[0.22em] text-muted/60">
-          Loomscape / studio build
-        </p>
+        <HomePreview />
       </motion.div>
     </div>
   );
@@ -134,69 +156,83 @@ export function SlideHero({ onEnter, onBrowse }: { onEnter: () => void; onBrowse
 const CAPABILITIES = [
   {
     index: '01',
-    name: '文本',
-    tagline: '从一句提纲到成稿',
-    detail: '流式起草 · 语气切换 · 结构化重写 · 本地记忆召回',
+    name: '看页面',
+    tagline: '先把当前页读成一张地图',
+    detail: '可访问名称 · 元素角色 · 视口位置 · 开放 Shadow DOM',
+    icon: Eye,
   },
   {
     index: '02',
-    name: '图像',
-    tagline: '在提示词与画面之间',
-    detail: '比例预设 · 批量生成 · 程序化构图兜底 · 作品归档',
+    name: '点得准',
+    tagline: '光标落在真实控件上',
+    detail: '点击 · 输入 · 滚动 · 高亮 · 离屏元素自动滚入',
+    icon: MousePointer2,
   },
   {
     index: '03',
-    name: '声音',
-    tagline: '录制、转写、配音',
-    detail: '浏览器内录音 · 实时波形 · 转写校对 · 语速与音色',
+    name: '会拆任务',
+    tagline: '一句话变成一串动作',
+    detail: '本地队列 · 模型规划（后续） · 最多六步 · 逐步显示',
+    icon: ListTree,
   },
   {
     index: '04',
-    name: '影像',
-    tagline: '在时间线上做取舍',
-    detail: '片段裁切 · 顺序调整 · 播放头走查 · 工程文件导出',
+    name: '随时停',
+    tagline: '危险动作不抢跑',
+    detail: '提交前确认 · 失败即停 · 人工接管 · 密码不填',
+    icon: ShieldCheck,
   },
 ];
 
 export function SlideCapabilities() {
   return (
-    <div className="mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 items-center gap-10 px-5 md:grid-cols-12 md:px-8">
-      <div className="md:col-span-4">
+    <div className="mx-auto grid h-full w-full max-w-[1280px] grid-cols-1 items-center gap-10 px-5 md:grid-cols-12 md:px-8">
+      <div data-slide-reveal="capability-intro" className="md:col-span-5">
         <Eyebrow>Capability</Eyebrow>
-        <h2 className="mt-6 font-serif text-[clamp(1.9rem,3.2vw,2.7rem)] leading-[1.25] text-ink">
-          四种材料，
+        <h2 className="mt-5 text-[clamp(1.9rem,3vw,2.6rem)] font-semibold leading-[1.2] text-ink">
+          一只光标，
           <br />
-          一套工序。
+          四种本事。
         </h2>
         <p className="mt-6 max-w-[38ch] text-[14px] leading-[1.9] text-muted">
-          每种材料都有独立的编辑面，但共享同一个项目、同一份记忆、同一套导出规则。
-          你不必为一个想法反复切换上下文。
+          它不只是会聊天：它要在当前页找到东西、点下去、填进去，并在做错之前停下来。
+          所有动作都发生在你看得见的地方。
         </p>
-      </div>
-
-      <div className="md:col-span-8">
-        <div className="neu rounded-[26px] px-7 py-3 md:px-9">
-          {CAPABILITIES.map((item) => (
-            <div
-              key={item.index}
-              className="group relative flex items-center gap-5 border-b border-[rgb(var(--line))]/55 py-5 last:border-0"
+        <div className="mt-6 flex flex-wrap gap-1.5">
+          {['当前页', '可确认', '可接管'].map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full border border-white/55 bg-white/30 px-2.5 py-1 text-[10.5px] text-muted backdrop-blur-md"
             >
-              <span className="absolute left-0 top-1/2 h-px w-0 -translate-y-1/2 bg-[rgb(var(--copper))]/70 transition-all duration-500 ease-weave group-hover:w-6" />
-              <span className="w-6 font-mono text-[10px] text-muted/60 transition-transform duration-500 ease-weave group-hover:translate-x-7">
-                {item.index}
-              </span>
-              <div className="w-[4.5rem] shrink-0 transition-transform duration-500 ease-weave group-hover:translate-x-6">
-                <span className="font-serif text-[19px] text-ink">{item.name}</span>
-              </div>
-              <div className="min-w-0 transition-transform duration-500 ease-weave group-hover:translate-x-6">
-                <div className="text-[13px] text-ink/85">{item.tagline}</div>
-                <div className="mt-1 truncate font-mono text-[10.5px] tracking-wide text-muted/70">
-                  {item.detail}
-                </div>
-              </div>
-            </div>
+              {tag}
+            </span>
           ))}
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:col-span-7">
+        {CAPABILITIES.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div
+              key={item.index}
+              data-slide-reveal={`capability-${item.index}`}
+              className="neu-sm grain rounded-2xl p-5"
+            >
+              <div className="flex items-center justify-between">
+                <span className="grid h-8 w-8 place-items-center rounded-lg border border-white/50 bg-white/35 text-[rgb(var(--accent))] backdrop-blur-md">
+                  <Icon size={15} strokeWidth={1.7} />
+                </span>
+                <span className="font-mono text-[9px] text-muted/50">{item.index}</span>
+              </div>
+              <h3 className="mt-5 text-[19px] font-semibold text-ink">{item.name}</h3>
+              <p className="mt-1 text-[12.5px] text-ink/80">{item.tagline}</p>
+              <p className="mt-2 font-mono text-[9px] leading-relaxed tracking-wide text-muted/65">
+                {item.detail}
+              </p>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -205,38 +241,38 @@ export function SlideCapabilities() {
 const STEPS = [
   {
     index: '01',
-    title: '采集',
-    en: 'Capture',
-    body: '把散落的素材、参考、只言片语收进同一个项目。文本、截图、录音、片段各有归处，不再散落在五个文件夹里。',
-    points: ['多模态导入', '项目级上下文', '本地暂存'],
+    title: '看见',
+    en: 'See',
+    body: '先读当前页：哪些能点、哪些能填、它们在哪里。光标拿到的是一张可操作的页面地图，不是一堆猜出来的坐标。',
+    points: ['可访问名称', '元素角色', '视口位置'],
   },
   {
     index: '02',
-    title: '编织',
-    en: 'Weave',
-    body: '在画布与时间线之间来回。每一次重写、每一版构图都保留理由，回到任何一个节点都能看清当时为什么这样改。',
-    points: ['流式改稿', '版本对照', '记忆召回'],
+    title: '动手',
+    en: 'Act',
+    body: '光标移动到目标，点击、填写、滚动或高亮。动作按步骤发生，你能看见它正在做什么，也能在下一步之前叫停。',
+    points: ['点击 / 输入', '滚动 / 高亮', '逐步执行'],
   },
   {
     index: '03',
-    title: '落定',
-    en: 'Settle',
-    body: '导出成稿、分镜或工程文件。喜欢的作品进入归档，偏好沉淀为下一次的默认值，而不是重新开始。',
-    points: ['多格式导出', '作品归档', '偏好沉淀'],
+    title: '确认',
+    en: 'Verify',
+    body: '提交、删除、发送之前先停下来问你。结果检查完再结束；你随时可以接管，或者让它在原地停住。',
+    points: ['危险动作确认', '结果校验', '人工接管'],
   },
 ];
 
 export function SlideProcess() {
   return (
-    <div className="mx-auto flex h-full w-full max-w-[1560px] flex-col justify-center px-5 md:px-8">
+    <div className="mx-auto flex h-full w-full max-w-[1280px] flex-col justify-center px-5 md:px-8">
       <Eyebrow>Workflow</Eyebrow>
 
-      <div className="mt-6 flex flex-wrap items-end justify-between gap-6">
-        <h2 className="font-serif text-[clamp(1.9rem,3.2vw,2.7rem)] leading-[1.25] text-ink">
-          三步，从草稿到成品。
+      <div data-slide-reveal="process-intro" className="mt-6 flex flex-wrap items-end justify-between gap-6">
+        <h2 className="text-[clamp(1.9rem,3vw,2.6rem)] font-semibold leading-[1.2] text-ink">
+          三步，让光标替你做。
         </h2>
         <p className="max-w-[38ch] text-[13px] leading-[1.9] text-muted">
-          工序是固定的，选择是自由的。你可以停在任何一步，也可以随时退回上一步重来。
+          不是后台脚本，是你能看见的浏览器动作。停在任何一步，都可以重新来过。
         </p>
       </div>
 
@@ -246,6 +282,7 @@ export function SlideProcess() {
           {STEPS.map((step, i) => (
             <motion.div
               key={step.index}
+              data-slide-reveal={`process-${i}`}
               initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
@@ -255,7 +292,7 @@ export function SlideProcess() {
               <span className="relative -top-[3px] block h-[7px] w-[7px] rounded-full bg-[rgb(var(--copper))] shadow-[0_0_0_4px_rgb(var(--paper))]" />
               <div className="mt-6 flex items-baseline gap-3">
                 <span className="font-mono text-[10px] text-muted/60">{step.index}</span>
-                <h3 className="font-serif text-[26px] text-ink">{step.title}</h3>
+                <h3 className="font-semibold text-[26px] text-ink">{step.title}</h3>
                 <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-muted/60">
                   {step.en}
                 </span>
@@ -279,33 +316,35 @@ export function SlideProcess() {
 
 export function SlideAbout({ onEnter }: { onEnter: () => void }) {
   return (
-    <div className="mx-auto grid h-full w-full max-w-[1560px] grid-cols-1 content-center gap-12 px-5 md:grid-cols-12 md:px-8">
+    <div className="mx-auto grid h-full w-full max-w-[1280px] grid-cols-1 content-center gap-12 px-5 md:grid-cols-12 md:px-8">
       <div className="md:col-span-7">
-        <Eyebrow>About</Eyebrow>
-        <h2 className="mt-6 font-serif text-[clamp(2rem,3.6vw,3.1rem)] leading-[1.22] text-ink text-balance">
-          你的材料，
-          <br />
-          留在你的机器上。
-        </h2>
-        <p className="mt-7 max-w-[54ch] text-[14px] leading-[1.95] text-muted text-pretty">
-          密钥与偏好写进浏览器的 IndexedDB，作品与记忆不出本机。端侧模型可以离线跑一个小模型兜底，
-          服务端只在你主动配置时才参与。没有账号同步，没有遥测，也没有一张你不知道用途的埋点表。
-        </p>
+        <div data-slide-reveal="about-copy">
+          <Eyebrow>About</Eyebrow>
+          <h2 className="mt-6 text-[clamp(2rem,3.4vw,3rem)] font-semibold leading-[1.2] text-ink text-balance">
+            它看见页面，
+            <br />
+            但不带走页面。
+          </h2>
+          <p className="mt-7 max-w-[54ch] text-[14px] leading-[1.95] text-muted text-pretty">
+            光标只在当前页工作。页面理解、动作执行和确认都留在浏览器里；默认不把页面交给远端模型。
+            输入值、密码和页面 HTML 不上传。
+          </p>
+        </div>
 
-        <div className="mt-10 grid grid-cols-3 gap-4 md:max-w-[26rem]">
+        <div data-slide-reveal="about-stats" className="mt-10 grid grid-cols-3 gap-4 md:max-w-[26rem]">
           {[
-            { value: '0', label: '服务端作品副本' },
-            { value: '3', label: '离线可用工作台' },
-            { value: '1', label: '份配置，可导出' },
+            { value: '0', label: '后台自动操作' },
+            { value: '100%', label: '可随时接管' },
+            { value: '0', label: '上传的输入值' },
           ].map((item) => (
             <div key={item.label}>
-              <div className="font-serif text-[30px] leading-none text-ink">{item.value}</div>
+              <div className="font-semibold text-[30px] leading-none text-ink">{item.value}</div>
               <div className="mt-2 text-[11px] leading-relaxed text-muted/80">{item.label}</div>
             </div>
           ))}
         </div>
 
-        <div className="mt-11 flex flex-wrap items-center gap-3">
+        <div data-slide-reveal="about-actions" className="mt-11 flex flex-wrap items-center gap-3">
           <Button variant="primary" size="lg" onClick={onEnter}>
             进入工作台
             <ArrowRight size={16} strokeWidth={1.8} />
@@ -325,18 +364,18 @@ export function SlideAbout({ onEnter }: { onEnter: () => void }) {
         </div>
       </div>
 
-      <div className="hidden md:col-span-5 md:block md:pl-6">
+      <div data-slide-reveal="about-system" className="hidden md:col-span-5 md:block md:pl-6">
         <div className="neu-inset grain rounded-[26px] p-7">
           <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted/80">
             System
           </div>
           <dl className="mt-5 space-y-4">
             {[
-              ['渲染', 'Next.js App Router · RSC'],
-              ['动效', 'Framer Motion · WebGL threads'],
-              ['存储', 'IndexedDB · localStorage'],
-              ['流式', 'SSE · ReadableStream'],
-              ['模型', '可配置端点 · 兼容协议'],
+              ['光标', 'Content script · 可见覆盖层'],
+              ['规划', '本地队列 · 模型后续'],
+              ['安全', '提交前确认 · 密码不填'],
+              ['接管', 'Esc · 停止 · 人工优先'],
+              ['边界', '当前页 · 顶层 · 不后台'],
             ].map(([key, value]) => (
               <div key={key} className="flex items-baseline justify-between gap-4 border-b border-[rgb(var(--line))]/50 pb-3 last:border-0 last:pb-0">
                 <dt className="text-[11.5px] text-muted">{key}</dt>

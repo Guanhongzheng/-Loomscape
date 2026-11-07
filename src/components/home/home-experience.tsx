@@ -25,6 +25,10 @@ export function HomeExperience() {
   }, []);
 
   useEffect(() => {
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual';
+    }
+
     const jump = () => {
       const target = workspaceRef.current;
       const root = rootRef.current;
@@ -32,7 +36,13 @@ export function HomeExperience() {
       root.scrollTo({ top: target.offsetTop, behavior: 'auto' });
     };
 
-    if (window.location.hash === '#workspace') jump();
+    if (window.location.hash === '#workspace') {
+      jump();
+    } else {
+      // Entering "/" always starts on the home screen, even after a refresh
+      // that the browser might otherwise restore into the workspace.
+      rootRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    }
 
     const onHash = () => {
       if (window.location.hash === '#workspace') jump();

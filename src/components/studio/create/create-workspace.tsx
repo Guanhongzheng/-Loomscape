@@ -99,18 +99,20 @@ export function CreateWorkspace({ initialTab = 'text' }: { initialTab?: CreateTa
               type="button"
               role="tab"
               aria-selected={on}
+              data-cursor-id={`create.tab.${row.id}`}
+              data-cursor-label={row.label}
               onClick={() => setTab(row.id)}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 text-[12px] transition-all duration-300 ease-weave',
+                'flex shrink-0 items-center gap-2 rounded-xl border px-3.5 py-2 text-[13px] transition-all duration-300 ease-weave',
                 on
-                  ? 'bg-[rgb(var(--surface))] text-ink shadow-[var(--shadow-neu-sm)]'
-                  : 'text-muted hover:bg-[rgb(var(--surface))]/55 hover:text-ink',
+                  ? 'border-[rgb(var(--accent))]/20 bg-[rgb(var(--accent))] text-[rgb(var(--surface))] shadow-[var(--shadow-accent)]'
+                  : 'border-transparent text-muted hover:border-white/55 hover:bg-white/25 hover:text-ink',
               )}
             >
               <Icon
-                size={14}
+                size={15}
                 strokeWidth={1.7}
-                className={on ? 'text-[rgb(var(--accent))]' : 'text-muted/70'}
+                className={on ? 'text-[rgb(var(--surface))]' : 'text-muted/80'}
               />
               {row.label}
             </button>

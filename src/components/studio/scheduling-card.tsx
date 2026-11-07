@@ -78,7 +78,7 @@ export function SchedulingCard() {
       id="scheduling"
       title="调度策略"
       hint="线程、精度与并发上限；改动在下次加载生效"
-      className="scroll-mt-24"
+      className="scroll-mt-6"
     >
       <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -89,13 +89,13 @@ export function SchedulingCard() {
             options={SCHEDULE_ORDER.map((id) => ({ value: id, label: SCHEDULES[id].label }))}
           />
           {custom ? (
-            <span className="rounded-full bg-[rgb(var(--line))]/45 px-2 py-0.5 text-[10px] text-muted">
+            <span className="rounded-full border border-[rgb(var(--line))]/70 px-2 py-0.5 text-[10.5px] text-muted">
               精度已单独调整
             </span>
           ) : null}
         </div>
 
-        <p className="-mt-1 text-[10.5px] leading-relaxed text-muted/65">{spec.note}</p>
+        <p className="-mt-1 text-[11px] leading-relaxed text-muted/75">{spec.note}</p>
 
         <div className="grid gap-2.5 sm:grid-cols-3">
           <Tile
@@ -130,21 +130,21 @@ export function SchedulingCard() {
             return (
               <div key={pool} className="flex items-center gap-3">
                 <span
-                  className="w-[74px] shrink-0 text-[10.5px] text-muted"
+                  className="w-[76px] shrink-0 text-[11px] text-muted"
                   title={`含运行时固定开销 ${pool === 'gpu' ? GPU_BASE_MB : RUNTIME_BASE_MB}MB`}
                 >
                   {POOL_LABEL[pool]} · {count} 个
                 </span>
-                <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[rgb(var(--line))]/55">
+                <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[rgb(var(--line))]/50">
                   <div
                     className={cn(
                       'h-full rounded-full transition-[width] duration-300',
-                      pool === 'gpu' ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--accent))]/70',
+                      pool === 'gpu' ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--accent))]/75',
                     )}
                     style={{ width: `${used > 0 ? Math.max(share, 2) : 0}%` }}
                   />
                 </div>
-                <span className="w-[112px] shrink-0 text-right font-mono text-[10px] text-muted/60">
+                <span className="w-[116px] shrink-0 text-right font-mono text-[10.5px] text-muted/65">
                   {formatBytes(used * 1024 * 1024)} / {(budget / 1024).toFixed(1)} GB
                 </span>
               </div>
@@ -152,7 +152,7 @@ export function SchedulingCard() {
           })}
         </div>
 
-        <p className="text-[10.5px] leading-relaxed text-muted/60">
+        <p className="text-[11px] leading-relaxed text-muted/70">
           已在内存的会话保持原线程与精度，换档只影响下一次加载；要立刻生效，在「本地模型」里卸载后重新加载。
           预算按设备内存估算
           {facts.memory ? `（${facts.memory}GB）` : '（浏览器未报告，按 8GB）'}，小内存机器会提前拒绝而不是崩溃。
@@ -164,10 +164,10 @@ export function SchedulingCard() {
 
 function Tile({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="rounded-xl border border-[rgb(var(--line))]/55 px-3.5 py-3 shadow-[var(--shadow-inset-sm)]">
-      <div className="text-[10.5px] text-muted">{label}</div>
-      <div className="mt-1 text-[12.5px] text-ink/85">{value}</div>
-      <div className="mt-0.5 text-[10px] text-muted/60">{note}</div>
+    <div className="rounded-xl border border-white/50 bg-white/35 px-3.5 py-3 backdrop-blur-md">
+      <div className="text-[11px] text-muted/85">{label}</div>
+      <div className="mt-1 text-[14px] text-ink">{value}</div>
+      <div className="mt-0.5 text-[10.5px] leading-relaxed text-muted/70">{note}</div>
     </div>
   );
 }

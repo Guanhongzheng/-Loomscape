@@ -46,13 +46,13 @@ export function SourceList({ text, sources }: { text: string; sources: RecallHit
           <li
             key={hit.record.id}
             className={cn(
-              'flex gap-2 text-[11px] leading-relaxed',
-              used ? 'text-muted' : 'text-muted/55',
+              'flex gap-2 text-[11.5px] leading-relaxed',
+              used ? 'text-muted' : 'text-muted/60',
             )}
           >
             <span
               className={cn(
-                'mt-px shrink-0 font-mono text-[10px]',
+                'mt-px shrink-0 font-mono text-[10.5px]',
                 used ? 'text-[rgb(var(--copper))]' : 'text-muted/40',
               )}
             >
@@ -192,7 +192,7 @@ export function ChatSessionPanel({
         <button
           type="button"
           onClick={() => void onNew()}
-          className="flex items-center gap-1 text-[11px] text-muted transition-colors hover:text-ink"
+          className="flex items-center gap-1 text-[11.5px] text-muted transition-colors hover:text-ink"
         >
           <Plus size={12} />
           新建
@@ -200,7 +200,7 @@ export function ChatSessionPanel({
       }
     >
       {sessions.length === 0 ? (
-        <p className="text-[11px] leading-relaxed text-muted/70">
+        <p className="text-[11.5px] leading-relaxed text-muted/75">
           发送第一条消息后自动保存。刷新页面、换工作台回来，都能接着上次的对话。
         </p>
       ) : (
@@ -213,8 +213,10 @@ export function ChatSessionPanel({
                 data-session={row.id}
                 data-active={active ? 'true' : 'false'}
                 className={cn(
-                  'group flex items-start gap-1.5 rounded-xl px-3 py-2',
-                  active ? 'shadow-[var(--shadow-inset-sm)]' : 'hover:bg-[rgb(var(--sunken))]',
+                  'group flex items-start gap-1.5 rounded-xl border px-3 py-2',
+                  active
+                    ? 'border-white/55 bg-white/40 backdrop-blur-md'
+                    : 'border-transparent hover:bg-white/20',
                 )}
               >
                 {editing && active ? (
@@ -227,7 +229,7 @@ export function ChatSessionPanel({
                       if (event.key === 'Enter') onCommit();
                       if (event.key === 'Escape') onCancel();
                     }}
-                    className="h-7 text-[11.5px]"
+                    className="h-7 text-[12px]"
                     aria-label="会话标题"
                   />
                 ) : (
@@ -236,8 +238,8 @@ export function ChatSessionPanel({
                     onClick={() => void onOpen(row.id)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <div className="truncate text-[11.5px] text-ink/85">{row.title}</div>
-                    <div className="font-mono text-[9.5px] text-muted/55">
+                    <div className="truncate text-[12.5px] text-ink/90">{row.title}</div>
+                    <div className="font-mono text-[10px] text-muted/65">
                       {timeAgo(row.updatedAt)} · {row.turns} 轮
                     </div>
                   </button>

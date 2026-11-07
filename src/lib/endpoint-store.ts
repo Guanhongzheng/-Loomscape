@@ -42,3 +42,19 @@ export function channelReady(
 ): boolean {
   return hasKey(state.endpoints[channel]) || state.health[channel];
 }
+
+/**
+ * The stored key exists but the vault is locked, so it reads as an empty
+ * string. `channelReady` already answers false in that case; this tells the
+ * caller *why* it is false, so the chat can point at the unlock field instead
+ * of offering a retrieval-only answer as if no key had ever been saved.
+ *
+ * A server-side key still wins: a deployment with env credentials does not
+ * need the browser vault, and its health flag keeps `channelReady` true.
+ */
+export function needsVaultUnlock(
+  state: Pick<EndpointState, 'endpoints' | 'health'>,
+  channel: Channel,
+): boolean {
+  return state.endpoints[channel]?.sealed === true && !channelReady(state, channel);
+}

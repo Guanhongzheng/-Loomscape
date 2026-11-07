@@ -63,7 +63,7 @@ function Tools({ message }: { message: Message }) {
         return (
           <span
             key={invocation.toolCallId}
-            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[9.5px] tracking-wide text-muted shadow-[var(--shadow-inset-sm)]"
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted shadow-[var(--shadow-inset-sm)]"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--copper))]/70" />
             {invocation.toolName}
@@ -291,6 +291,8 @@ export default function TextWorkbench() {
               onChange={(event) => setBrief(event.target.value)}
               placeholder="例如：为一家只在夜里营业的书店写一段开业预告，语气克制。"
               className="text-[13px]"
+              data-cursor-id="create.prompt"
+              data-cursor-label="创作提示词"
             />
 
             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -299,7 +301,7 @@ export default function TextWorkbench() {
                   key={seed}
                   type="button"
                   onClick={() => setBrief(seed)}
-                  className="rounded-full bg-[rgb(var(--surface))] px-2.5 py-1 text-[10.5px] text-muted shadow-[var(--shadow-neu-sm)] transition-colors hover:text-ink"
+                  className="rounded-full bg-[rgb(var(--surface))] px-2.5 py-1 text-[11px] text-muted shadow-[var(--shadow-neu-sm)] transition-colors hover:text-ink"
                 >
                   {seed.slice(0, 9)}…
                 </button>
@@ -309,15 +311,15 @@ export default function TextWorkbench() {
             <div className="mt-4 space-y-3.5">
               <div className="rounded-xl px-3 py-2.5 shadow-[var(--shadow-inset-sm)]">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-muted">引擎</span>
+                  <span className="text-[11.5px] text-muted">引擎</span>
                   <Link
                     href="/studio/settings"
-                    className="text-[10.5px] text-[rgb(var(--copper))]/85 hover:underline"
+                    className="text-[11px] text-[rgb(var(--copper))]/85 hover:underline"
                   >
                     在设置中更换
                   </Link>
                 </div>
-                <div className="mt-1 text-[12px] text-ink/85">
+                <div className="mt-1 text-[12.5px] text-ink/85">
                   {localMode
                     ? `本地 · ${localModel?.label ?? '未选择模型'}`
                     : live
@@ -327,7 +329,7 @@ export default function TextWorkbench() {
               </div>
 
               <div>
-                <div className="mb-2 text-[12px] font-medium tracking-wide text-muted">语气</div>
+                <div className="mb-2 text-[12.5px] font-medium tracking-wide text-muted">语气</div>
                 <Segmented
                   size="sm"
                   value={tone}
@@ -370,7 +372,7 @@ export default function TextWorkbench() {
               )}
             </div>
 
-            <p className="mt-3 text-[10.5px] leading-relaxed text-muted/70">
+            <p className="mt-3 text-[11px] leading-relaxed text-muted/70">
               {localMode
                 ? `在浏览器内运行 ${localModel?.label ?? '本地模型'}，权重已缓存，首次推理需要加载 10–20 秒。`
                 : live
@@ -386,7 +388,7 @@ export default function TextWorkbench() {
 
           <Panel title="作品库" hint="最近保存的文本">
             {saved.length === 0 ? (
-              <p className="text-[11.5px] leading-relaxed text-muted/75">还没有保存的文本。</p>
+              <p className="text-[12px] leading-relaxed text-muted/75">还没有保存的文本。</p>
             ) : (
               <ul className="space-y-2.5">
                 {saved.map((item) => (
@@ -403,10 +405,10 @@ export default function TextWorkbench() {
                       }}
                       className="group w-full text-left"
                     >
-                      <div className="truncate text-[12px] text-ink/85 group-hover:text-ink">
+                      <div className="truncate text-[12.5px] text-ink/85 group-hover:text-ink">
                         {item.title}
                       </div>
-                      <div className="mt-0.5 font-mono text-[9.5px] text-muted/60">
+                      <div className="mt-0.5 font-mono text-[10px] text-muted/60">
                         {relativeTime(item.updatedAt)}
                       </div>
                     </button>
@@ -430,7 +432,7 @@ export default function TextWorkbench() {
                   setMessages([]);
                   setLocalTurns([]);
                 }}
-                className="text-[11px] text-muted transition-colors hover:text-ink"
+                className="text-[11.5px] text-muted transition-colors hover:text-ink"
               >
                 清空
               </button>
@@ -449,13 +451,13 @@ export default function TextWorkbench() {
                   <article key={turn.id}>
                     {turn.role === 'user' ? (
                       <div className="flex items-start gap-3">
-                        <span className="mt-[3px] font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
+                        <span className="mt-[3px] font-mono text-[10px] uppercase tracking-[0.18em] text-muted/55">
                           {new Date(turn.at).toLocaleTimeString('zh-CN', {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
                         </span>
-                        <p className="flex-1 whitespace-pre-wrap text-[12.5px] leading-relaxed text-muted">
+                        <p className="flex-1 whitespace-pre-wrap text-[13px] leading-relaxed text-muted">
                           {turn.text}
                         </p>
                       </div>
@@ -478,7 +480,7 @@ export default function TextWorkbench() {
                         {turn.tools ? <Tools message={turn.tools} /> : null}
 
                         <div className="mt-3 flex items-center gap-1">
-                          <span className="mr-auto font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/50">
+                          <span className="mr-auto font-mono text-[10px] uppercase tracking-[0.16em] text-muted/50">
                             {turn.mode === 'offline'
                               ? 'offline draft'
                               : turn.mode === 'local'
@@ -489,7 +491,7 @@ export default function TextWorkbench() {
                           <button
                             type="button"
                             onClick={() => copy(turn.id, turn.text)}
-                            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                            className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
                           >
                             {copied === turn.id ? <Check size={12} /> : <Copy size={12} />}
                             {copied === turn.id ? '已复制' : '复制'}
@@ -499,7 +501,7 @@ export default function TextWorkbench() {
                             <button
                               type="button"
                               onClick={() => keep(turn.id, brief, turn.text)}
-                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
                             >
                               <Save size={12} />
                               保存
@@ -513,7 +515,7 @@ export default function TextWorkbench() {
                                 if (localMode) void generate();
                                 else void reload();
                               }}
-                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
+                              className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11.5px] text-muted transition-colors hover:bg-[rgb(var(--surface))] hover:text-ink"
                             >
                               <RotateCcw size={12} />
                               重写
@@ -526,14 +528,14 @@ export default function TextWorkbench() {
                 ))}
 
                 {busy ? (
-                  <div className="flex items-center gap-2 text-[11px] text-muted">
+                  <div className="flex items-center gap-2 text-[11.5px] text-muted">
                     <Loader2 size={12} className="animate-spin" />
                     正在生成，可随时停止
                   </div>
                 ) : null}
 
                 {error ? (
-                  <p className="rounded-lg bg-[#f3e2df] px-3 py-2 text-[11.5px] text-[#8c3b32]">
+                  <p className="rounded-lg bg-[#f3e2df] px-3 py-2 text-[12px] text-[#8c3b32]">
                     {error.message}
                   </p>
                 ) : null}

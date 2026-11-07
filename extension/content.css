@@ -1,0 +1,627 @@
+:root {
+  --loom-ink: #29251f;
+  --loom-muted: #746c60;
+  --loom-paper: #fbf7ef;
+  --loom-line: #d8d0c3;
+  --loom-copper: #a8703f;
+  --loom-copper-soft: #c99a70;
+  --loom-sage: #4d7a5c;
+}
+
+#loom-ai-root,
+#loom-ai-root * {
+  box-sizing: border-box;
+}
+
+#loom-ai-root {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  color: var(--loom-ink);
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  color-scheme: light;
+}
+
+#loom-ai-root button,
+#loom-ai-root input {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+/* The pointer itself ------------------------------------------------------- */
+
+.loom-ai-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 28px;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  transition:
+    transform 560ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms ease;
+  filter: drop-shadow(0 5px 12px rgb(64 44 24 / 0.24));
+  z-index: 3;
+}
+
+.loom-ai-cursor.is-visible {
+  opacity: 1;
+}
+
+.loom-ai-cursor svg {
+  display: block;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+
+.loom-ai-cursor__tag {
+  position: absolute;
+  left: 21px;
+  top: -8px;
+  padding: 3px 5px 2px;
+  border-radius: 4px;
+  background: var(--loom-copper);
+  color: #fffaf3;
+  font: 8px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  box-shadow: 0 2px 6px rgb(64 44 24 / 0.2);
+}
+
+.loom-ai-cursor__caption {
+  position: absolute;
+  left: 21px;
+  top: 18px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgb(251 247 239 / 0.82);
+  color: var(--loom-muted);
+  font: 7px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+
+.loom-ai-cursor__ring {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgb(168 112 63 / 0.42);
+  border-radius: 999px;
+  animation: loom-cursor-pulse 2.4s ease-out infinite;
+}
+
+@keyframes loom-cursor-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.8;
+  }
+  70% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+.loom-ai-cursor.is-clicking::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 38px;
+  height: 38px;
+  border: 1.5px solid var(--loom-copper);
+  border-radius: 999px;
+  animation: loom-click 520ms ease-out forwards;
+}
+
+@keyframes loom-click {
+  from {
+    transform: scale(0.25);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.1);
+    opacity: 0;
+  }
+}
+
+/* Selection box ------------------------------------------------------------ */
+
+.loom-ai-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: 1.5px dashed var(--loom-copper);
+  border-radius: 7px;
+  background:
+    linear-gradient(90deg, rgb(168 112 63 / 0.045), rgb(168 112 63 / 0.12)),
+    rgb(251 247 239 / 0.02);
+  box-shadow:
+    0 0 0 1px rgb(251 247 239 / 0.5),
+    0 8px 28px rgb(64 44 24 / 0.08);
+  transition:
+    opacity 180ms ease,
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    height 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 2;
+}
+
+.loom-ai-highlight.is-visible {
+  opacity: 1;
+}
+
+.loom-ai-highlight__label {
+  position: absolute;
+  left: -1px;
+  top: -24px;
+  max-width: 260px;
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 4px 4px 0 0;
+  background: var(--loom-copper);
+  color: #fffaf3;
+  font: 9px/1.15 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Launcher ---------------------------------------------------------------- */
+
+.loom-ai-launcher {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  cursor: pointer;
+  place-items: center;
+  pointer-events: auto;
+  border: 1px solid rgb(255 250 243 / 0.45);
+  border-radius: 999px;
+  background: var(--loom-ink);
+  color: #fffaf3;
+  box-shadow:
+    0 8px 24px -8px rgb(40 30 20 / 0.6),
+    0 0 0 4px rgb(251 247 239 / 0.12);
+  font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.05em;
+  transition: transform 180ms ease, background 180ms ease;
+  z-index: 4;
+}
+
+.loom-ai-launcher::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px solid rgb(168 112 63 / 0.34);
+  border-radius: 999px;
+  animation: loom-cursor-pulse 2.8s ease-out infinite;
+}
+
+.loom-ai-launcher:hover {
+  transform: translateY(-2px);
+  background: var(--loom-copper);
+}
+
+@media (max-width: 640px) {
+  .loom-ai-launcher {
+    right: 12px;
+    bottom: 12px;
+    width: 34px;
+    height: 34px;
+  }
+}
+
+/* Command panel ------------------------------------------------------------ */
+
+.loom-ai-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  width: min(572px, calc(100vw - 28px));
+  transform: translate(-50%, 14px);
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border: 1px solid rgb(120 102 80 / 0.24);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgb(255 253 248 / 0.98), rgb(247 241 231 / 0.98));
+  box-shadow:
+    0 26px 70px -24px rgb(40 30 20 / 0.5),
+    0 2px 0 rgb(255 255 255 / 0.7) inset;
+  transition:
+    opacity 180ms ease,
+    transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.loom-ai-panel.is-open {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+
+.loom-ai-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 8px;
+}
+
+.loom-ai-panel__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--loom-muted);
+}
+
+.loom-ai-panel__brand strong {
+  color: var(--loom-ink);
+  font-weight: 600;
+}
+
+.loom-ai-panel__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--loom-sage);
+  box-shadow: 0 0 0 3px rgb(77 122 92 / 0.12);
+}
+
+.loom-ai-panel__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.loom-ai-icon-button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  cursor: pointer;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--loom-muted);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.loom-ai-icon-button:hover {
+  background: rgb(120 102 80 / 0.09);
+  color: var(--loom-ink);
+}
+
+.loom-ai-icon-button[data-stop] {
+  color: #9c4b3c;
+}
+
+.loom-ai-panel__body {
+  padding: 0 14px 10px;
+}
+
+.loom-ai-panel__status {
+  min-height: 17px;
+  margin: 0 0 8px;
+  color: var(--loom-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.loom-ai-panel__status[data-tone="error"] {
+  color: #a34b3e;
+}
+
+.loom-ai-panel__status[data-tone="ok"] {
+  color: #3e6b4e;
+}
+
+.loom-ai-plan {
+  display: none;
+  margin: 0 0 9px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--loom-copper);
+  border-radius: 0 7px 7px 0;
+  background: rgb(168 112 63 / 0.055);
+}
+
+.loom-ai-plan.is-visible {
+  display: block;
+}
+
+.loom-ai-plan__step {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-height: 18px;
+  color: rgb(116 108 96 / 0.72);
+  font: 9.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.01em;
+}
+
+.loom-ai-plan__index {
+  width: 15px;
+  flex: none;
+  color: rgb(116 108 96 / 0.62);
+  text-align: right;
+}
+
+.loom-ai-plan__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loom-ai-plan__step[data-state="active"] {
+  color: var(--loom-ink);
+}
+
+.loom-ai-plan__step[data-state="active"] .loom-ai-plan__index {
+  color: var(--loom-copper);
+}
+
+.loom-ai-plan__step[data-state="done"] {
+  color: #4d7a5c;
+}
+
+.loom-ai-plan__step[data-state="error"] {
+  color: #a34b3e;
+}
+
+.loom-ai-panel__composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid rgb(120 102 80 / 0.22);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 0.55);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.loom-ai-panel__composer:focus-within {
+  border-color: rgb(168 112 63 / 0.55);
+  box-shadow: 0 0 0 3px rgb(168 112 63 / 0.1);
+}
+
+.loom-ai-panel__composer input {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  outline: none;
+  background: transparent;
+  color: var(--loom-ink);
+  font-size: 13px;
+}
+
+.loom-ai-panel__composer input::placeholder {
+  color: rgb(116 108 96 / 0.7);
+}
+
+.loom-ai-panel__send {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  padding: 0 11px;
+  border-radius: 8px;
+  background: var(--loom-ink);
+  color: #fffaf3;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.loom-ai-panel__send:hover {
+  transform: translateY(-1px);
+}
+
+.loom-ai-panel__send[disabled] {
+  cursor: not-allowed;
+  opacity: 0.4;
+  transform: none;
+}
+
+.loom-ai-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.loom-ai-chip {
+  cursor: pointer;
+  padding: 4px 8px;
+  border: 1px solid rgb(120 102 80 / 0.18);
+  border-radius: 999px;
+  color: var(--loom-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.loom-ai-chip:hover {
+  border-color: rgb(168 112 63 / 0.42);
+  background: rgb(168 112 63 / 0.08);
+  color: var(--loom-ink);
+}
+
+.loom-ai-panel__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid rgb(120 102 80 / 0.12);
+  color: rgb(116 108 96 / 0.85);
+  font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.04em;
+}
+
+.loom-ai-panel kbd {
+  display: inline-block;
+  padding: 1px 4px;
+  border: 1px solid rgb(120 102 80 / 0.22);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.5);
+  font: inherit;
+}
+
+/* Confirmation ------------------------------------------------------------- */
+
+.loom-ai-confirm {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgb(31 26 20 / 0.24);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+  z-index: 5;
+}
+
+.loom-ai-confirm.is-open {
+  display: flex;
+}
+
+.loom-ai-confirm__card {
+  width: min(390px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid rgb(120 102 80 / 0.22);
+  border-radius: 16px;
+  background: var(--loom-paper);
+  box-shadow: 0 26px 70px -20px rgb(40 30 20 / 0.45);
+}
+
+.loom-ai-confirm__eyebrow {
+  margin: 0 0 8px;
+  color: var(--loom-copper);
+  font: 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.loom-ai-confirm__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.loom-ai-confirm__body {
+  margin: 7px 0 0;
+  color: var(--loom-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.loom-ai-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.loom-ai-confirm__button {
+  cursor: pointer;
+  padding: 8px 13px;
+  border-radius: 8px;
+  border: 1px solid rgb(120 102 80 / 0.2);
+  color: var(--loom-muted);
+  font-size: 12px;
+}
+
+.loom-ai-confirm__button[data-primary] {
+  border-color: var(--loom-ink);
+  background: var(--loom-ink);
+  color: #fffaf3;
+}
+
+.loom-ai-confirm__button:hover {
+  opacity: 0.86;
+}
+
+/* Toasts ------------------------------------------------------------------- */
+
+.loom-ai-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 104px;
+  max-width: min(420px, calc(100vw - 32px));
+  transform: translate(-50%, 8px);
+  padding: 8px 12px;
+  border: 1px solid rgb(120 102 80 / 0.2);
+  border-radius: 9px;
+  background: rgb(251 247 239 / 0.96);
+  box-shadow: 0 10px 28px rgb(40 30 20 / 0.16);
+  color: var(--loom-ink);
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.loom-ai-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 640px) {
+  .loom-ai-panel {
+    bottom: 12px;
+    width: calc(100vw - 20px);
+    border-radius: 15px;
+  }
+
+  .loom-ai-panel__foot {
+    display: none;
+  }
+
+  .loom-ai-panel__chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .loom-ai-panel__chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .loom-ai-cursor__caption {
+    display: none;
+  }
+}

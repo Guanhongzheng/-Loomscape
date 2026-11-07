@@ -114,7 +114,7 @@ export default function StoryWorkbench() {
               className="h-12 border-0 bg-transparent px-0 font-serif text-[22px] shadow-none focus:shadow-none"
               placeholder="给这个故事一个名字"
             />
-            <div className="mt-1 flex items-center gap-4 font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/55">
+            <div className="mt-1 flex items-center gap-4 font-mono text-[10px] uppercase tracking-[0.18em] text-muted/55">
               <span>{panels.length} 格</span>
               <span>{chars} 字</span>
               <span>本地草稿</span>
@@ -152,11 +152,11 @@ export default function StoryWorkbench() {
                         className="flex aspect-[4/3] w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[rgb(var(--line))] text-muted/60 shadow-[var(--shadow-inset-sm)] transition-colors hover:border-[rgb(var(--muted))]/40 hover:text-ink"
                       >
                         <ImagePlus size={17} strokeWidth={1.5} />
-                        <span className="text-[10.5px]">挂一张画面</span>
+                        <span className="text-[11px]">挂一张画面</span>
                       </button>
                     )}
                     {panel.note ? (
-                      <p className="mt-2 line-clamp-2 font-mono text-[9.5px] leading-relaxed text-muted/60">
+                      <p className="mt-2 line-clamp-2 font-mono text-[10px] leading-relaxed text-muted/60">
                         {panel.note}
                       </p>
                     ) : null}
@@ -202,7 +202,9 @@ export default function StoryWorkbench() {
                       value={panel.text}
                       onChange={(event) => patch(panel.id, { text: event.target.value })}
                       placeholder="这一格发生什么？写动作与可见的细节，不写解释。"
-                      className="text-[12.5px] leading-[1.9]"
+                      className="text-[13px] leading-[1.9]"
+                      data-cursor-id="create.prompt"
+                      data-cursor-label="故事分镜"
                     />
                   </div>
                 </div>
@@ -213,7 +215,7 @@ export default function StoryWorkbench() {
           <button
             type="button"
             onClick={add}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[rgb(var(--line))] py-4 text-[12px] text-muted transition-colors hover:border-[rgb(var(--muted))]/40 hover:text-ink"
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-[rgb(var(--line))] py-4 text-[12.5px] text-muted transition-colors hover:border-[rgb(var(--muted))]/40 hover:text-ink"
           >
             <Plus size={14} />
             加一格
@@ -223,7 +225,7 @@ export default function StoryWorkbench() {
         <div className="space-y-5">
           <Panel title="结构" hint="从归档里取画面">
             {archive.length === 0 ? (
-              <p className="text-[11.5px] leading-relaxed text-muted/75">
+              <p className="text-[12px] leading-relaxed text-muted/75">
                 还没有归档画面。去图像创作台生成几张，回来就能挂进分镜。
               </p>
             ) : (
@@ -251,24 +253,24 @@ export default function StoryWorkbench() {
                 })}
               </div>
             )}
-            <p className="mt-3 text-[10.5px] leading-relaxed text-muted/60">
+            <p className="mt-3 text-[11px] leading-relaxed text-muted/60">
               点击缩略图会挂到当前选中的格子。
             </p>
           </Panel>
 
           <Panel title="导出">
-            <ul className="space-y-2 text-[11.5px] text-muted/80">
+            <ul className="space-y-2 text-[12px] text-muted/80">
               <li className="flex justify-between">
                 <span>格式</span>
-                <span className="font-mono text-[10.5px] text-ink/70">Markdown</span>
+                <span className="font-mono text-[11px] text-ink/70">Markdown</span>
               </li>
               <li className="flex justify-between">
                 <span>画面</span>
-                <span className="font-mono text-[10.5px] text-ink/70">引用说明</span>
+                <span className="font-mono text-[11px] text-ink/70">引用说明</span>
               </li>
               <li className="flex justify-between">
                 <span>存储</span>
-                <span className="font-mono text-[10.5px] text-ink/70">本地作品库</span>
+                <span className="font-mono text-[11px] text-ink/70">本地作品库</span>
               </li>
             </ul>
             <Button variant="soft" size="sm" className="mt-4 w-full" onClick={exportMarkdown}>
@@ -286,7 +288,7 @@ export default function StoryWorkbench() {
         description="来自图像创作台的归档，已压缩到 640px。"
       >
         {archive.length === 0 ? (
-          <p className="text-[12px] text-muted">归档为空。</p>
+          <p className="text-[12.5px] text-muted">归档为空。</p>
         ) : (
           <div className="grid max-h-[52vh] grid-cols-3 gap-2 overflow-y-auto">
             {archive.map((item) => {

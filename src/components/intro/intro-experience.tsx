@@ -2,16 +2,18 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, useMotionValue, useSpring } from 'framer-motion';
-import { ArrowRight, LogIn } from 'lucide-react';
+import { ArrowRight, ChevronLeft, ChevronRight, LogIn } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { Mark } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/cn';
 import { WeaveCanvas } from './weave-canvas';
 import { IntroBootSkeleton } from './boot-skeleton';
-import { FlightPath, PaperPlane } from './paper-plane';
+import { AiCursor, AiCursorTrail } from './ai-cursor';
 import { SlideAbout, SlideCapabilities, SlideHero, SlideProcess } from './slides';
 import { AuthDialog } from './auth-dialog';
+import { IntroChromeBuild } from './intro-chrome-build';
+import { SlideCursorBuild } from './slide-cursor-build';
 
 // Avoids the server-render warning that useLayoutEffect triggers during SSR.
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -201,48 +203,71 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
 
   return (
     <>
-      <main className="relative h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]">
+      <main
+        data-intro-index={index}
+        className="relative h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]"
+      >
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_18%_12%,rgba(255,255,255,0.9),transparent_58%),radial-gradient(90%_70%_at_88%_82%,rgba(176,122,74,0.07),transparent_62%)]" />
+        <div aria-hidden="true" className="studio-aurora z-[1] opacity-80" />
         <WeaveCanvas className="pointer-events-none absolute inset-0 z-0 opacity-90" />
 
         <header className="pointer-events-none absolute inset-x-0 top-0 z-40">
-          <div className="pointer-events-auto mx-auto flex max-w-[1720px] items-center justify-between px-5 py-5 md:px-8 md:py-6">
+          <div
+            data-intro-chrome="header"
+            className="pointer-events-auto mx-auto flex max-w-[1280px] items-center justify-between px-5 py-5 md:px-8 md:py-6"
+          >
             <button type="button" onClick={() => goTo(0)} className="flex items-center gap-3 text-ink">
               <Mark className="h-[26px] w-[26px]" />
               <span className="flex items-baseline gap-2.5">
-                <span className="font-serif text-[16px] tracking-[0.06em]">织境</span>
-                <span className="hidden font-mono text-[9.5px] uppercase tracking-[0.34em] text-muted sm:inline">
+                <span className="text-[16px] font-semibold tracking-[0.06em]">织境</span>
+                <span className="hidden font-mono text-[9.5px] uppercase tracking-[0.3em] text-muted sm:inline">
                   Loomscape
                 </span>
               </span>
             </button>
 
-            <nav className="hidden items-center gap-1 md:flex">
+            <nav className="nav-surface hidden items-center gap-0.5 rounded-full p-1 md:flex">
               {SECTIONS.map((section, i) => (
                 <button
                   key={section.id}
                   type="button"
                   onClick={() => goTo(i)}
                   className={cn(
-                    'relative rounded-full px-4 py-2 text-[12.5px] transition-colors duration-300',
+                    'relative rounded-full px-3.5 py-2 text-[12.5px] transition-colors duration-300',
                     index === i ? 'text-ink' : 'text-muted hover:text-ink/80',
                   )}
                 >
                   {index === i ? (
                     <motion.span
-                      layoutId="intro-nav-pill"
-                      className="absolute inset-0 rounded-full bg-[rgb(var(--surface))] shadow-[var(--shadow-neu-sm)]"
-                      transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+                      layoutId="intro-nav-active"
+                      className="absolute inset-0 rounded-full border border-white/60 bg-white/70 shadow-[var(--shadow-neu-sm)]"
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                     />
                   ) : null}
-                  <span className="relative">{section.label}</span>
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    {index === i ? (
+                      <motion.span
+                        layoutId="intro-nav-dot"
+                        className="h-1 w-1 rounded-full bg-[rgb(var(--copper))]"
+                      />
+                    ) : null}
+                    {section.label}
+                  </span>
                 </button>
               ))}
             </nav>
 
             <div className="flex items-center gap-3">
-              <span className="hidden font-mono text-[10px] uppercase tracking-[0.24em] text-muted/70 sm:inline">
-                本地优先
+              <span className="hidden items-center gap-2 sm:flex">
+                <span className="hidden font-mono text-[10px] uppercase tracking-[0.24em] text-muted/70 lg:inline">
+                  本地优先
+                </span>
+                <span className="h-1 w-14 overflow-hidden rounded-full bg-white/40">
+                  <span
+                    className="block h-full w-full origin-left rounded-full bg-[rgb(var(--accent))]/55 transition-transform duration-500 ease-weave"
+                    style={{ transform: `scaleX(${(index + 1) / SECTIONS.length})` }}
+                  />
+                </span>
               </span>
               <span className="font-mono text-[10px] tabular-nums text-muted/70">
                 {String(index + 1).padStart(2, '0')}
@@ -257,28 +282,39 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
           ref={scrollerRef}
           className="pager no-scrollbar relative z-10 flex h-[100dvh] w-full overflow-x-auto overflow-y-hidden"
         >
-          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-            <SlideHero onEnter={onEnter} onBrowse={() => goTo(1)} />
+          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
+            <SlideCursorBuild active={index === 0}>
+              <SlideHero onEnter={onEnter} onBrowse={() => goTo(1)} />
+            </SlideCursorBuild>
           </section>
-          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-            <SlideCapabilities />
+          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
+            <SlideCursorBuild active={index === 1}>
+              <SlideCapabilities />
+            </SlideCursorBuild>
           </section>
-          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-            <SlideProcess />
+          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
+            <SlideCursorBuild active={index === 2}>
+              <SlideProcess />
+            </SlideCursorBuild>
           </section>
-          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-28 pt-28 md:overflow-hidden">
-            <SlideAbout onEnter={onEnter} />
+          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
+            <SlideCursorBuild active={index === 3}>
+              <SlideAbout onEnter={onEnter} />
+            </SlideCursorBuild>
           </section>
         </div>
 
-        <FlightPath progress={flight} />
-        <PaperPlane progress={flight} />
+        <AiCursorTrail progress={flight} />
+        <AiCursor progress={flight} />
 
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-5 md:pb-6">
-          <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-[rgb(var(--paper))]/85 p-2 pl-3 shadow-[0_18px_44px_-18px_rgba(30,42,60,0.4),inset_0_1px_0_rgba(255,255,255,0.9)] backdrop-blur-md md:gap-3">
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-5 md:pb-6">
+          <div
+            data-intro-chrome="pager"
+            className="nav-surface pointer-events-auto flex h-[52px] w-[560px] max-w-[calc(100vw-2rem)] items-center justify-between gap-2 rounded-full p-1.5 pl-3"
+          >
             {user && !user.guest ? (
               <div className="flex items-center gap-2.5 pr-1">
-                <span className="grid h-7 w-7 place-items-center rounded-full bg-[rgb(var(--sunken))] font-mono text-[10px] text-ink/70 shadow-[var(--shadow-inset-sm)]">
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-[rgb(var(--paper))]/70 font-mono text-[10px] text-ink/70">
                   {user.handle.slice(0, 1).toUpperCase()}
                 </span>
                 <span className="max-w-[7rem] truncate text-[12px] text-ink/80">{user.handle}</span>
@@ -295,9 +331,19 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
               </button>
             )}
 
-            <span className="h-5 w-px bg-[rgb(var(--line))]" />
+            <span className="h-5 w-px bg-[rgb(var(--line))]/70" />
 
-            <div className="hidden items-center gap-1.5 sm:flex">
+            <button
+              type="button"
+              aria-label="上一页"
+              onClick={() => goTo(Math.max(index - 1, 0))}
+              disabled={index === 0}
+              className="hidden h-7 w-7 place-items-center rounded-full text-muted transition-colors hover:bg-white/35 hover:text-ink disabled:pointer-events-none disabled:opacity-25 sm:grid"
+            >
+              <ChevronLeft size={14} strokeWidth={1.8} />
+            </button>
+
+            <div className="flex items-center gap-1">
               {SECTIONS.map((section, i) => (
                 <button
                   key={section.id}
@@ -306,24 +352,45 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
                   onClick={() => goTo(i)}
                   className="group grid h-6 w-6 place-items-center"
                 >
-                  <span
-                    className={cn(
-                      'h-1.5 rounded-full transition-all duration-500 ease-weave',
-                      index === i
-                        ? 'w-5 bg-[rgb(var(--accent))]'
-                        : 'w-1.5 bg-[rgb(var(--line))] group-hover:bg-muted/50',
-                    )}
-                  />
+                  {index === i ? (
+                    <motion.span
+                      layoutId="intro-pager-active"
+                      className="h-1.5 w-5 rounded-full bg-[rgb(var(--accent))]"
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  ) : (
+                    <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--line))] transition-colors duration-300 group-hover:bg-muted/50" />
+                  )}
                 </button>
               ))}
             </div>
 
-            <span className="hidden h-5 w-px bg-[rgb(var(--line))] sm:block" />
+            <button
+              type="button"
+              aria-label="下一页"
+              onClick={() => goTo(Math.min(index + 1, SECTIONS.length - 1))}
+              disabled={index === SECTIONS.length - 1}
+              className="hidden h-7 w-7 place-items-center rounded-full text-muted transition-colors hover:bg-white/35 hover:text-ink disabled:pointer-events-none disabled:opacity-25 sm:grid"
+            >
+              <ChevronRight size={14} strokeWidth={1.8} />
+            </button>
 
-            <Button variant="primary" size="sm" onClick={onEnter} className="rounded-full px-4">
-              进入工作台
-              <ArrowRight size={13} strokeWidth={2} />
-            </Button>
+            <span className="hidden px-1 text-[10.5px] tracking-wide text-muted/65 lg:inline">
+              {SECTIONS[index].label}
+            </span>
+
+            <span className="hidden h-5 w-px bg-[rgb(var(--line))]/70 sm:block" />
+
+            {index > 0 ? (
+              <Button variant="primary" size="sm" onClick={onEnter} className="rounded-full px-4">
+                进入工作台
+                <ArrowRight size={13} strokeWidth={2} />
+              </Button>
+            ) : (
+              <span className="hidden px-2 text-[10.5px] tracking-wide text-muted/65 sm:inline">
+                滚轮 / 方向键翻阅
+              </span>
+            )}
           </div>
         </div>
 
@@ -332,6 +399,8 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
           className="absolute bottom-0 left-0 z-40 h-[2px] origin-left bg-[rgb(var(--accent))]/35"
           style={{ scaleX: flight, width: '100%' }}
         />
+
+        <IntroChromeBuild />
 
         <AuthDialog
           open={authOpen}

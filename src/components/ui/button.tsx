@@ -9,7 +9,7 @@ type Size = 'sm' | 'md' | 'lg' | 'icon';
 
 const variants: Record<Variant, string> = {
   primary:
-    'bg-[rgb(var(--accent))] text-[rgb(var(--paper))] shadow-[0_10px_24px_rgba(38,62,92,0.28),inset_0_1px_0_rgba(255,255,255,0.18)] hover:bg-[rgb(var(--accent))]/92 active:translate-y-px',
+    'bg-[rgb(var(--accent))] text-[rgb(var(--surface))] shadow-[var(--shadow-accent)] hover:bg-[rgb(var(--accent))]/92 active:translate-y-px',
   soft: 'neu neu-press text-ink',
   ghost: 'text-muted hover:text-ink hover:bg-[rgb(var(--surface))]/70',
   inset: 'neu-inset-sm text-ink',
@@ -17,7 +17,7 @@ const variants: Record<Variant, string> = {
 
 const sizes: Record<Size, string> = {
   sm: 'h-9 px-3.5 text-[13px] gap-1.5 rounded-xl',
-  md: 'h-11 px-5 text-sm gap-2 rounded-2xl',
+  md: 'h-11 px-5 text-[13.5px] gap-2 rounded-xl',
   lg: 'h-[3.25rem] px-7 text-[15px] gap-2.5 rounded-2xl',
   icon: 'h-10 w-10 rounded-xl justify-center',
 };

@@ -247,7 +247,7 @@ export default function SocialWorkbench() {
                 value={uidInput}
                 onChange={(event) => setUidInput(event.target.value.toUpperCase())}
                 placeholder="对方的 UID"
-                className="h-10 font-mono text-[12px] tracking-[0.12em]"
+                className="h-10 font-mono text-[13px] tracking-[0.12em]"
                 maxLength={12}
               />
               <div className="flex gap-2">
@@ -255,7 +255,7 @@ export default function SocialWorkbench() {
                   value={nameInput}
                   onChange={(event) => setNameInput(event.target.value)}
                   placeholder="备注名（可选）"
-                  className="h-10 text-[12px]"
+                  className="h-10 text-[13px]"
                 />
                 <Button variant="soft" size="sm" onClick={addFriend} className="shrink-0">
                   添加
@@ -293,10 +293,10 @@ export default function SocialWorkbench() {
                         )}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12.5px] text-ink/85">
+                        <span className="block truncate text-[13px] text-ink/90">
                           {conversation.name}
                         </span>
-                        <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[9.5px] text-muted/60">
+                        <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted/65">
                           {conversation.kind === 'group'
                             ? `群号 ${conversation.code} · ${conversation.members.length} 人`
                             : '直接会话'}
@@ -411,7 +411,7 @@ export default function SocialWorkbench() {
                         </div>
                         <div
                           className={cn(
-                            'max-w-[76%] rounded-2xl px-4 py-2.5 text-[12.5px] leading-relaxed',
+                            'max-w-[76%] rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed',
                             mine
                               ? 'bg-[rgb(var(--accent))] text-[rgb(var(--paper))]'
                               : 'bg-[rgb(var(--surface))] text-ink/85 shadow-[var(--shadow-neu-sm)]',
@@ -439,7 +439,7 @@ export default function SocialWorkbench() {
                     }}
                     rows={1}
                     placeholder="写点什么，Enter 发送"
-                    className="max-h-32 min-h-[44px] flex-1 resize-none rounded-xl bg-[rgb(var(--sunken))] px-3.5 py-3 text-[12.5px] text-ink shadow-[var(--shadow-inset-sm)] outline-none placeholder:text-muted/55"
+                    className="max-h-32 min-h-[44px] flex-1 resize-none rounded-xl border border-white/55 bg-white/50 px-3.5 py-3 text-[13.5px] text-ink backdrop-blur-xl outline-none placeholder:text-muted/60 focus:border-white/80"
                   />
                   <Button
                     variant="primary"

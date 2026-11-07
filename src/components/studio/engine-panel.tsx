@@ -230,7 +230,14 @@ export function EnginePanel() {
       }
     }
 
-    setModel(model.id, { state: 'downloading', progress: 0, message: undefined });
+    setModel(model.id, {
+      state: 'downloading',
+      progress: 0,
+      file: undefined,
+      loaded: undefined,
+      total: undefined,
+      message: undefined,
+    });
     try {
       await loadModel(model, {
         source: prefs.source,
@@ -279,8 +286,21 @@ export function EnginePanel() {
       );
     } catch (error) {
       const message = describeError(error);
-      setModel(model.id, { state: 'error', progress: 0, message });
+      // local-runtime keeps the transfer's last byte count on failure; writing
+      // progress 0 here would erase it a moment later from the card.
+      const current = useModelRuntime.getState().models[model.id];
+      setModel(model.id, {
+        state: 'error',
+        progress: current?.progress ?? 0,
+        file: current?.file,
+        loaded: current?.loaded,
+        total: current?.total,
+        message,
+      });
       toast(`${model.label} 加载失败：${message}`, 'error');
+      // A failed session may still have left cache entries behind; rescan so
+      // the card does not keep claiming "已下载" from the pre-attempt scan.
+      await refresh();
     }
   };
 
@@ -390,10 +410,15 @@ export function EnginePanel() {
 
   return (
     <>
-      <Panel title="引擎" hint="文本与嵌入各自选择来源；本地权重存在浏览器里">
+      <Panel
+        id="engine"
+        title="引擎"
+        hint="文本与嵌入各自选择来源；本地权重存在浏览器里"
+        className="scroll-mt-6"
+      >
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="w-8 shrink-0 text-[11px] text-muted">文本</span>
+            <span className="w-8 shrink-0 text-[11.5px] text-muted">文本</span>
             <Segmented
               size="sm"
               value={prefs.textMode}
@@ -403,7 +428,7 @@ export function EnginePanel() {
                 { value: 'local', label: '本地模型' },
               ]}
             />
-            <span className="ml-auto flex items-center gap-2 text-[11px] text-muted/75">
+            <span className="ml-auto flex items-center gap-2 text-[11.5px] text-muted/75">
               {textStatus}
               {prefs.textMode === 'local' && !textReady ? (
                 <a href="#models" className="text-[rgb(var(--copper))] hover:underline">
@@ -427,7 +452,7 @@ export function EnginePanel() {
           <div className="h-px bg-[rgb(var(--line))]/45" />
 
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="w-8 shrink-0 text-[11px] text-muted">嵌入</span>
+            <span className="w-8 shrink-0 text-[11.5px] text-muted">嵌入</span>
             <Segmented
               size="sm"
               value={prefs.embeddingMode}
@@ -438,7 +463,7 @@ export function EnginePanel() {
                 { value: 'api', label: 'API' },
               ]}
             />
-            <span className="ml-auto flex items-center gap-2 text-[11px] text-muted/75">
+            <span className="ml-auto flex items-center gap-2 text-[11.5px] text-muted/75">
               {embedStatus}
               {prefs.embeddingMode === 'local' && !embedder?.tag.startsWith('local:') ? (
                 <a href="#models" className="text-[rgb(var(--copper))] hover:underline">
@@ -454,13 +479,13 @@ export function EnginePanel() {
         id="models"
         title="本地模型"
         hint="下载后点「加载」即选用；文本与嵌入可同时驻留，只有同一个内存池装不下才会卸掉另一侧"
-        className="scroll-mt-24"
+        className="scroll-mt-6"
       >
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <div
               data-resident={residents.map((row) => row.modelId).join(' ')}
-              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted"
+              className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-muted"
             >
               <span className="flex items-center gap-1.5">
                 <span
@@ -506,7 +531,7 @@ export function EnginePanel() {
                     <button
                       type="button"
                       onClick={() => void unload(row.modelId, model?.label)}
-                      className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+                      className="text-[11.5px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
                     >
                       卸载
                     </button>
@@ -536,7 +561,7 @@ export function EnginePanel() {
                 <button
                   type="button"
                   onClick={() => window.location.reload()}
-                  className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
+                  className="text-[11.5px] text-muted underline-offset-2 transition-colors hover:text-ink hover:underline"
                 >
                   刷新页面归还内存
                 </button>
@@ -586,7 +611,7 @@ export function EnginePanel() {
           </div>
 
           {backend === 'webgpu' && prefs.gpuPrecision === 'q4f16' ? (
-            <p className="text-[10.5px] leading-relaxed text-muted/60">
+            <p className="text-[11px] leading-relaxed text-muted/70">
               4 位只作用于文本模型，省一半显存；嵌入模型仍走 fp16——BGE 的 4 位会话在 WebGPU
               上建不起来（ONNX Runtime 1151160272），而它本来就只有百兆级。
             </p>
@@ -606,22 +631,22 @@ export function EnginePanel() {
         />
 
         {retired.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-muted">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11.5px] text-muted">
             <span>旧版模型权重</span>
-            <span className="text-[10.5px] text-muted/60">
+            <span className="text-[11px] text-muted/70">
               {retired.map((row) => row.label).join(' / ')} · {formatBytes(retiredBytes)}
             </span>
             <button
               type="button"
               onClick={() => void dropRetired()}
-              className="ml-auto text-[11px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
+              className="ml-auto text-[11.5px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
             >
               清理
             </button>
           </div>
         ) : null}
 
-        <p className="text-[10.5px] leading-relaxed text-muted/60">
+        <p className="text-[11px] leading-relaxed text-muted/70">
           权重存在本机浏览器缓存，不会上传。卸载只释放内存，刷新页面才真正归还。
           {usage
             ? ` 存储已用 ${formatBytes(usage.used)} / ${formatBytes(usage.quota)}（${usedPercent}%）${

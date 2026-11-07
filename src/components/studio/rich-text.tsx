@@ -12,7 +12,7 @@ export function RichText({ text, className }: { text: string; className?: string
   const lines = text.split('\n');
 
   return (
-    <div className={cn('space-y-3 text-[13.5px] leading-[1.95] text-ink/85', className)}>
+    <div className={cn('space-y-3 text-[14px] leading-[1.95] text-ink/90', className)}>
       {lines.map((line, index) => {
         const trimmed = line.trim();
 
@@ -22,7 +22,7 @@ export function RichText({ text, className }: { text: string; className?: string
           return (
             <h3
               key={index}
-              className="pt-2 font-serif text-[15px] tracking-wide text-ink first:pt-0"
+              className="pt-2 font-serif text-[16px] tracking-wide text-ink first:pt-0"
             >
               {trimmed.slice(3)}
             </h3>
@@ -31,8 +31,8 @@ export function RichText({ text, className }: { text: string; className?: string
 
         if (/^\d+\.\s/.test(trimmed)) {
           return (
-            <div key={index} className="flex gap-2.5 text-[13px] text-ink/75">
-              <span className="font-mono text-[10px] text-muted/70">{trimmed.split('.')[0]}</span>
+            <div key={index} className="flex gap-2.5 text-[13.5px] text-ink/80">
+              <span className="font-mono text-[10.5px] text-muted/75">{trimmed.split('.')[0]}</span>
               <span>{trimmed.replace(/^\d+\.\s/, '')}</span>
             </div>
           );
@@ -40,7 +40,7 @@ export function RichText({ text, className }: { text: string; className?: string
 
         if (trimmed.startsWith('- ')) {
           return (
-            <div key={index} className="flex gap-2.5 text-[13px] text-ink/75">
+            <div key={index} className="flex gap-2.5 text-[13.5px] text-ink/80">
               <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[rgb(var(--copper))]/70" />
               <span>{trimmed.slice(2)}</span>
             </div>

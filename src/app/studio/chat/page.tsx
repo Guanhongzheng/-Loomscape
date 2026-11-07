@@ -7,7 +7,7 @@ import { ChannelBadge, Panel, WorkbenchHeader } from '@/components/studio/workbe
 import { textOf } from '@/components/studio/chat-parts';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
-import { channelReady, useEndpoints } from '@/lib/endpoint-store';
+import { channelReady, needsVaultUnlock, useEndpoints } from '@/lib/endpoint-store';
 import { findModel, useEngines, useModelRuntime } from '@/lib/engines';
 import { streamLocal } from '@/lib/local-runtime';
 import {
@@ -55,6 +55,11 @@ export default function ChatWorkbench() {
   const endpoints = useEndpoints((state) => state.endpoints);
   const health = useEndpoints((state) => state.health);
   const live = channelReady({ endpoints, health }, 'text');
+  // A sealed key reads as empty while the vault is locked. `live` is false in
+  // that case too, but the reason is different: the key is there, waiting for
+  // the passphrase. Without this flag the page offered a retrieval-only answer
+  // as if the endpoint had never been configured.
+  const vaultLocked = needsVaultUnlock({ endpoints, health }, 'text');
 
   const prefs = useEngines((state) => state.prefs);
   const loadEngines = useEngines((state) => state.load);
@@ -283,6 +288,15 @@ export default function ChatWorkbench() {
     if (!text || busy || sending.current) return;
     sending.current = true;
 
+    // Stop before retrieval and before the input is cleared: the transcript
+    // already holds the question, and re-asking after unlocking is cheaper than
+    // losing the draft. The composer's status line links straight to the field.
+    if (!localMode && vaultLocked) {
+      toast('密钥保险箱已锁定：先去设置解锁，云端对话才会恢复', 'error');
+      sending.current = false;
+      return;
+    }
+
     // Deterministic input should not be sampled: on-device models read "10-3"
     // as 10.3 often enough that arithmetic is answered here, while everything
     // else still goes to the model.
@@ -451,9 +465,11 @@ export default function ChatWorkbench() {
   // A stored model name without a key would claim an engine that never runs.
   const engineLabel = localMode
     ? `本地 · ${localModel?.label ?? '未选择模型'}`
-    : live
-      ? `云端 · ${endpoints.text.model}`
-      : '云端 · 未配置';
+    : vaultLocked
+      ? '云端 · 密钥保险箱已锁定'
+      : live
+        ? `云端 · ${endpoints.text.model}`
+        : '云端 · 未配置';
 
   return (
     <div>
@@ -464,9 +480,28 @@ export default function ChatWorkbench() {
         actions={<ChannelBadge channel="text" />}
       />
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[240px_minmax(0,1fr)_270px]">
+        <div className="order-2 xl:order-1 xl:max-h-[calc(100dvh-18rem)] xl:overflow-y-auto xl:pr-1">
+          <ChatSessionPanel
+            sessions={sessions}
+            activeId={activeId}
+            editing={editingTitle}
+            draft={titleDraft}
+            onDraftChange={setTitleDraft}
+            onOpen={openChat}
+            onNew={startNew}
+            onCommit={commitRename}
+            onCancel={() => setEditingTitle(false)}
+            onBeginRename={(row) => {
+              setTitleDraft(customTitle.current || row.title);
+              setEditingTitle(true);
+            }}
+            onDelete={dropChat}
+          />
+        </div>
+
         <Panel
-          className="flex h-[calc(100dvh-21rem)] min-h-[420px] flex-col md:h-[calc(100dvh-18.5rem)] md:min-h-[520px]"
+          className="order-1 flex h-[calc(100dvh-21rem)] min-h-[420px] flex-col md:min-h-[520px] xl:order-2 xl:h-[calc(100dvh-18rem)] xl:min-h-[560px]"
           bodyClassName="flex min-h-0 flex-1 flex-col p-0"
           title="对话"
           hint={`${turns.filter((turn) => turn.role === 'assistant').length} 轮`}
@@ -475,7 +510,7 @@ export default function ChatWorkbench() {
               <button
                 type="button"
                 onClick={reset}
-                className="text-[11px] text-muted transition-colors hover:text-ink"
+                className="text-[11.5px] text-muted transition-colors hover:text-ink"
               >
                 清空
               </button>
@@ -499,27 +534,11 @@ export default function ChatWorkbench() {
             engineLabel={engineLabel}
             ragLabel={ragOn ? (embedder?.label ?? '哈希') : '已关闭'}
             localMode={localMode}
+            vaultLocked={!localMode && vaultLocked}
           />
         </Panel>
 
-        <div className="space-y-5">
-          <ChatSessionPanel
-            sessions={sessions}
-            activeId={activeId}
-            editing={editingTitle}
-            draft={titleDraft}
-            onDraftChange={setTitleDraft}
-            onOpen={openChat}
-            onNew={startNew}
-            onCommit={commitRename}
-            onCancel={() => setEditingTitle(false)}
-            onBeginRename={(row) => {
-              setTitleDraft(customTitle.current || row.title);
-              setEditingTitle(true);
-            }}
-            onDelete={dropChat}
-          />
-
+        <div className="order-3 space-y-5 xl:max-h-[calc(100dvh-18rem)] xl:overflow-y-auto xl:pr-1">
           <KnowledgePanel
             title={title}
             onTitle={setTitle}
@@ -534,8 +553,6 @@ export default function ChatWorkbench() {
           />
 
           <RetrievalPanel embedder={embedder} />
-
-
         </div>
       </div>
     </div>

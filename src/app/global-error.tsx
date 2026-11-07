@@ -14,15 +14,15 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
           margin: 0,
           display: 'grid',
           placeItems: 'center',
-          background: '#edf0f4',
-          color: '#2c2c2a',
+          background: '#f6f2ea',
+          color: '#1b1814',
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
         }}
       >
         <main style={{ maxWidth: 420, padding: 24, textAlign: 'center' }}>
-          <h1 style={{ fontSize: 16, fontWeight: 500, margin: 0 }}>界面没能加载出来</h1>
-          <p style={{ fontSize: 13, lineHeight: 1.7, opacity: 0.72, margin: '10px 0 18px' }}>
+          <h1 style={{ fontSize: 18, fontWeight: 500, margin: 0 }}>界面没能加载出来</h1>
+          <p style={{ fontSize: 13.5, lineHeight: 1.7, opacity: 0.75, margin: '10px 0 18px' }}>
             本地数据（作品、记忆、模型权重）都还在浏览器里，刷新不会丢。
           </p>
           <p
@@ -40,12 +40,13 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
             type="button"
             onClick={reset}
             style={{
-              height: 34,
-              padding: '0 16px',
+              height: 36,
+              padding: '0 18px',
               borderRadius: 999,
-              border: '1px solid rgba(0,0,0,0.12)',
-              background: '#fff',
-              fontSize: 12,
+              border: '1px solid #1e3f3a',
+              background: '#1e3f3a',
+              color: '#fffdf8',
+              fontSize: 13,
               cursor: 'pointer',
             }}
           >

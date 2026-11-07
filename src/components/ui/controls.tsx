@@ -50,14 +50,14 @@ export function Segmented<T extends string>({
             }}
             className={cn(
               'relative rounded-full font-medium transition-colors duration-300',
-              size === 'sm' ? 'h-7 px-3 text-[11.5px]' : 'h-8 px-4 text-[12.5px]',
+              size === 'sm' ? 'h-7 px-3 text-[12px]' : 'h-8 px-4 text-[13px]',
               active ? 'text-ink' : 'text-muted hover:text-ink/80',
             )}
           >
             {active ? (
               <motion.span
                 layoutId={`seg-${id}`}
-                className="absolute inset-0 rounded-full bg-[rgb(var(--paper))] shadow-[2px_2px_6px_rgba(158,172,192,0.4),-2px_-2px_5px_rgba(255,255,255,0.9)]"
+                className="absolute inset-0 rounded-full border border-[rgb(var(--line))]/70 bg-[rgb(var(--surface))] shadow-[0_1px_2px_rgba(44,36,26,0.08)]"
                 transition={{ type: 'spring', stiffness: 420, damping: 34 }}
               />
             ) : null}
@@ -95,12 +95,14 @@ export function Switch({
         aria-label={label}
         onClick={() => onChange(!checked)}
         className={cn(
-          'relative h-7 w-12 shrink-0 rounded-full transition-all duration-300 ease-weave',
-          checked ? 'neu-inset-sm' : 'neu-sm',
+          'relative h-7 w-12 shrink-0 rounded-full border transition-colors duration-300 ease-weave',
+          checked
+            ? 'border-[rgb(var(--accent))]/30 bg-[rgb(var(--accent))]'
+            : 'border-[rgb(var(--line))]/80 bg-[rgb(var(--sunken))]',
         )}
       >
         <motion.span
-          className="absolute top-1 h-5 w-5 rounded-full bg-[rgb(var(--paper))] shadow-[1px_1px_4px_rgba(150,164,184,0.6),-1px_-1px_3px_rgba(255,255,255,0.9)]"
+          className="absolute top-1 h-5 w-5 rounded-full bg-[rgb(var(--surface))] shadow-[0_1px_3px_rgba(44,36,26,0.25)]"
           animate={{ left: checked ? 24 : 4 }}
           transition={{ type: 'spring', stiffness: 520, damping: 32 }}
         >

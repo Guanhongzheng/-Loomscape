@@ -37,6 +37,27 @@ export function VaultPanel() {
     setStatus(vaultStatus());
   }, []);
 
+  /**
+   * `/studio/settings#vault` is the link the chat page offers while locked.
+   * The studio scrolls inside `<main>`, and a client-side transition runs before
+   * the browser's fragment pass, so the URL changes while the panel stays below
+   * the fold. Scroll the panel into the real container once it is mounted (and
+   * when the hash changes while this page is already open).
+   */
+  useEffect(() => {
+    const jump = () => {
+      if (window.location.hash !== '#vault') return;
+      document.getElementById('vault')?.scrollIntoView({ block: 'start', behavior: 'auto' });
+    };
+    jump();
+    const timer = window.setTimeout(jump, 180);
+    window.addEventListener('hashchange', jump);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('hashchange', jump);
+    };
+  }, []);
+
   const resealStored = async () => {
     for (const endpoint of Object.values(endpoints)) {
       if (!endpoint.apiKey) continue;
@@ -76,8 +97,12 @@ export function VaultPanel() {
     }
   };
 
-  const lock = () => {
+  const lock = async () => {
     lockVault();
+    // The store still holds the decrypted keys from the last load. Without this
+    // reload they stay usable in memory, and the chat page keeps believing the
+    // channel is ready until the tab is refreshed.
+    await reload();
     setStatus('locked');
     toast('已锁定：保存的密钥暂时不可用', 'info');
   };
@@ -100,7 +125,7 @@ export function VaultPanel() {
         value={passphrase}
         onChange={(event) => setPassphrase(event.target.value)}
         placeholder="口令，至少 8 位"
-        className="h-9 w-full font-mono text-[11.5px] sm:w-[240px]"
+        className="h-9 w-full font-mono text-[12px] sm:w-[240px]"
         spellCheck={false}
         autoComplete="off"
         aria-label="保险箱口令"
@@ -124,12 +149,12 @@ export function VaultPanel() {
       id="vault"
       title="密钥保险箱"
       hint="可选；口令不落盘，忘记只能重填密钥"
-      className="scroll-mt-24"
+      className="scroll-mt-6"
     >
       <div className="space-y-3">
         {status === 'off' ? (
           <>
-            <p className="text-[11px] leading-relaxed text-muted/75">
+            <p className="text-[12px] leading-relaxed text-muted">
               端点密钥目前以明文存在本机 IndexedDB。设置一个口令后，密钥会用
               AES-GCM 加密再写入；口令只留在内存里，刷新后需要重新解锁。
             </p>
@@ -139,14 +164,14 @@ export function VaultPanel() {
 
         {status === 'locked' ? (
           <>
-            <p className="text-[11px] leading-relaxed text-muted/75">
+            <p className="text-[12px] leading-relaxed text-muted">
               保险箱已锁定，已保存的密钥暂不可用。解锁后聊天、图像与语音的云端通道才会恢复。
             </p>
             {field}
             <button
               type="button"
               onClick={() => void remove()}
-              className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
+              className="text-[11.5px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
             >
               移除保险箱（密钥需重填）
             </button>
@@ -155,19 +180,19 @@ export function VaultPanel() {
 
         {status === 'unlocked' ? (
           <>
-            <p className="flex items-center gap-1.5 text-[11px] text-[#3f6b4f]">
+            <p className="flex items-center gap-1.5 text-[12px] text-[#3f6b4f]">
               <ShieldCheck size={12} />
               已解锁：保存的密钥在写入时会自动加密
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={lock}>
+              <Button variant="ghost" size="sm" onClick={() => void lock()}>
                 <Lock size={12} />
                 锁定
               </Button>
               <button
                 type="button"
                 onClick={() => void remove()}
-                className="text-[11px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
+                className="text-[11.5px] text-muted underline-offset-2 transition-colors hover:text-[#a24a3f] hover:underline"
               >
                 移除保险箱
               </button>

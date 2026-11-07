@@ -12,6 +12,7 @@ const base = {
   engineLabel: '本地 · Qwen3 0.6B',
   ragLabel: '哈希',
   localMode: false,
+  vaultLocked: false,
 };
 
 const render = (patch: Partial<typeof base> = {}) =>
@@ -40,5 +41,23 @@ describe('Composer', () => {
 
   it('explains the trade-off only when the local model is the engine', () => {
     expect(render({ localMode: true })).toContain('端侧模型');
+  });
+
+  it('sends a locked vault to the passphrase field instead of a generic settings link', () => {
+    const html = render({
+      vaultLocked: true,
+      engineLabel: '云端 · 密钥保险箱已锁定',
+    });
+    expect(html).toContain('密钥保险箱已锁定，云端对话暂不可用');
+    expect(html).toContain('data-vault-locked="true"');
+    expect(html).toContain('href="/studio/settings#vault"');
+    expect(html).toContain('去解锁');
+    expect(html).not.toContain('>去设置<');
+  });
+
+  it('keeps the ordinary settings link when the vault is not locked', () => {
+    const html = render();
+    expect(html).toContain('href="/studio/settings"');
+    expect(html).not.toContain('data-vault-locked');
   });
 });
