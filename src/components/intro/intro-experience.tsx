@@ -12,8 +12,7 @@ import { IntroBootSkeleton } from './boot-skeleton';
 import { AiCursor, AiCursorTrail } from './ai-cursor';
 import { SlideAbout, SlideCapabilities, SlideHero, SlideProcess } from './slides';
 import { AuthDialog } from './auth-dialog';
-import { IntroChromeBuild } from './intro-chrome-build';
-import { SlideCursorBuild } from './slide-cursor-build';
+import { preloadCursorGemma } from '@/lib/cursor/home-model';
 
 // Avoids the server-render warning that useLayoutEffect triggers during SSR.
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
@@ -23,11 +22,18 @@ const BOOT_MIN_MS = 900;
 const BOOT_MAX_MS = 2600;
 
 const SECTIONS = [
-  { id: 'intro', label: '简介' },
-  { id: 'capability', label: '能力' },
-  { id: 'workflow', label: '织法' },
-  { id: 'about', label: '关于' },
+  { id: 'intro', label: '创作' },
+  { id: 'capability', label: '对话' },
+  { id: 'workflow', label: '底座' },
+  { id: 'about', label: '光标' },
 ];
+
+/**
+ * Stop-motion easing: the active pill lands in a handful of discrete frames
+ * instead of gliding. A spring reads as "floating"; stepped frames read as a
+ * drag with weight, which is what the nav should feel like.
+ */
+const STEP_EASE = (t: number) => Math.floor(t * 5) / 5;
 
 export function IntroExperience({ onEnter }: { onEnter: () => void }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -50,6 +56,19 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  const requestEnter = useCallback(() => {
+    if (!ready) return;
+    if (user) onEnter();
+    else setAuthOpen(true);
+  }, [onEnter, ready, user]);
+
+  // Warm the cursor model without drawing anything: the header, the wordmark
+  // and the pager are fixed chrome now, so there is no build overlay to hide
+  // them behind.
+  useEffect(() => {
+    void preloadCursorGemma().catch(() => undefined);
+  }, []);
 
   useIsoLayoutEffect(() => {
     let seen = false;
@@ -214,7 +233,7 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
         <header className="pointer-events-none absolute inset-x-0 top-0 z-40">
           <div
             data-intro-chrome="header"
-            className="pointer-events-auto mx-auto flex max-w-[1280px] items-center justify-between px-5 py-5 md:px-8 md:py-6"
+            className="pointer-events-auto relative flex w-full max-w-none items-center justify-between px-4 py-5 md:px-5 md:py-6"
           >
             <button type="button" onClick={() => goTo(0)} className="flex items-center gap-3 text-ink">
               <Mark className="h-[26px] w-[26px]" />
@@ -226,33 +245,35 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
               </span>
             </button>
 
-            <nav className="nav-surface hidden items-center gap-0.5 rounded-full p-1 md:flex">
+            <nav className="nav-surface absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-0.5 rounded-full p-1 ring-1 ring-black/10 md:flex">
               {SECTIONS.map((section, i) => (
                 <button
                   key={section.id}
                   type="button"
                   onClick={() => goTo(i)}
+                  aria-current={index === i ? 'page' : undefined}
                   className={cn(
-                    'relative rounded-full px-3.5 py-2 text-[12.5px] transition-colors duration-300',
-                    index === i ? 'text-ink' : 'text-muted hover:text-ink/80',
+                    'relative rounded-full px-3.5 py-2 text-[12.5px] transition-[color,background-color,box-shadow] duration-150',
+                    index === i
+                      ? 'text-ink'
+                      : 'text-muted hover:bg-white/60 hover:text-ink/90 hover:ring-1 hover:ring-black/[0.06]',
                   )}
                 >
                   {index === i ? (
                     <motion.span
                       layoutId="intro-nav-active"
-                      className="absolute inset-0 rounded-full border border-white/60 bg-white/70 shadow-[var(--shadow-neu-sm)]"
-                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                    />
-                  ) : null}
-                  <span className="relative z-10 flex items-center gap-1.5">
-                    {index === i ? (
-                      <motion.span
-                        layoutId="intro-nav-dot"
-                        className="h-1 w-1 rounded-full bg-[rgb(var(--copper))]"
+                      className="absolute inset-0 rounded-full bg-white ring-1 ring-black/[0.14] shadow-[0_1px_2px_rgba(30,42,60,0.10),0_8px_18px_-14px_rgba(30,42,60,0.45)]"
+                      transition={{ type: 'tween', duration: 0.18, ease: STEP_EASE }}
+                    >
+                      {/* The marker lives inside the travelling pill, so it
+                          cannot arrive on a different beat than the white shape. */}
+                      <span
+                        data-nav-underline
+                        className="absolute inset-x-4 bottom-[3px] h-[2px] rounded-full bg-[rgb(var(--copper))]/75"
                       />
-                    ) : null}
-                    {section.label}
-                  </span>
+                    </motion.span>
+                  ) : null}
+                  <span className="relative z-10">{section.label}</span>
                 </button>
               ))}
             </nav>
@@ -283,24 +304,16 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
           className="pager no-scrollbar relative z-10 flex h-[100dvh] w-full overflow-x-auto overflow-y-hidden"
         >
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideCursorBuild active={index === 0}>
-              <SlideHero onEnter={onEnter} onBrowse={() => goTo(1)} />
-            </SlideCursorBuild>
+            <SlideHero onEnter={requestEnter} onBrowse={() => goTo(1)} />
           </section>
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideCursorBuild active={index === 1}>
-              <SlideCapabilities />
-            </SlideCursorBuild>
+            <SlideCapabilities />
           </section>
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideCursorBuild active={index === 2}>
-              <SlideProcess />
-            </SlideCursorBuild>
+            <SlideProcess />
           </section>
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideCursorBuild active={index === 3}>
-              <SlideAbout onEnter={onEnter} />
-            </SlideCursorBuild>
+            <SlideAbout onEnter={requestEnter} />
           </section>
         </div>
 
@@ -349,6 +362,7 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
                   key={section.id}
                   type="button"
                   aria-label={`前往${section.label}`}
+                  aria-current={index === i ? 'step' : undefined}
                   onClick={() => goTo(i)}
                   className="group grid h-6 w-6 place-items-center"
                 >
@@ -382,7 +396,7 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
             <span className="hidden h-5 w-px bg-[rgb(var(--line))]/70 sm:block" />
 
             {index > 0 ? (
-              <Button variant="primary" size="sm" onClick={onEnter} className="rounded-full px-4">
+              <Button variant="primary" size="sm" onClick={requestEnter} className="rounded-full px-4">
                 进入工作台
                 <ArrowRight size={13} strokeWidth={2} />
               </Button>
@@ -399,8 +413,6 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
           className="absolute bottom-0 left-0 z-40 h-[2px] origin-left bg-[rgb(var(--accent))]/35"
           style={{ scaleX: flight, width: '100%' }}
         />
-
-        <IntroChromeBuild />
 
         <AuthDialog
           open={authOpen}

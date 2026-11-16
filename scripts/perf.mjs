@@ -20,6 +20,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const explicit = process.env.PERF_BASE;
 const PORT = process.env.PERF_PORT ?? '3315';
 const base = explicit ?? `http://localhost:${PORT}`;
+const nextBin = path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next');
 const budget = {
   lcp: Number(process.env.PERF_LCP_MS ?? 4000),
   overview: Number(process.env.PERF_OVERVIEW_MS ?? 5000),
@@ -44,9 +45,8 @@ async function ensureServer() {
     throw new Error('没有构建产物，先运行 npm run build');
   }
   console.log(`starting next start on ${PORT}`);
-  server = spawn('npx', ['next', 'start', '-p', PORT], {
+  server = spawn(process.execPath, [nextBin, 'start', '-p', PORT], {
     cwd: root,
-    shell: true,
     stdio: 'ignore',
   });
   for (let i = 0; i < 60; i += 1) {
@@ -108,6 +108,11 @@ try {
 
   const started = Date.now();
   await page.goto(base + '/#workspace', { waitUntil: 'networkidle' });
+  const gate = page.locator('[data-auth-gate]');
+  if (await gate.count()) {
+    await gate.getByRole('button', { name: /以访客身份继续/ }).click();
+    await page.waitForTimeout(500);
+  }
   await page.waitForSelector('[data-overview="continue"]', { timeout: 15_000 });
   const overviewMs = Date.now() - started;
   await page
@@ -133,7 +138,7 @@ try {
   metric('first contentful paint', browserMetrics.firstPaint, budget.overview);
 
   const clickStarted = Date.now();
-  await page.locator('[data-workbench="02"]').click();
+  await page.locator('aside a[href="/studio/chat"]').first().click();
   await page.waitForURL('**/studio/chat**', { timeout: 8_000 });
   const clickMs = Date.now() - clickStarted;
   metric('overview → 对话 click', clickMs, budget.click);

@@ -9,7 +9,7 @@ type Size = 'sm' | 'md' | 'lg' | 'icon';
 
 const variants: Record<Variant, string> = {
   primary:
-    'bg-[rgb(var(--accent))] text-[rgb(var(--surface))] shadow-[var(--shadow-accent)] hover:bg-[rgb(var(--accent))]/92 active:translate-y-px',
+    'border border-[rgb(var(--accent))]/25 bg-white/65 text-[rgb(var(--accent))] shadow-[0_12px_28px_-20px_rgba(116,103,151,0.45)] backdrop-blur-md hover:bg-white/85 active:translate-y-px',
   soft: 'neu neu-press text-ink',
   ghost: 'text-muted hover:text-ink hover:bg-[rgb(var(--surface))]/70',
   inset: 'neu-inset-sm text-ink',

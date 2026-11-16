@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AnimatePresence, motion, useReducedMotion, useScroll } from 'framer-motion';
-import { ArrowLeft, Loader2, LogIn, LogOut, Plus } from 'lucide-react';
-import { useAuth, wasSignedOut } from '@/lib/auth';
+import { Loader2, LogIn, LogOut, Plus } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 import { useEndpoints } from '@/lib/endpoint-store';
+import { useStudioTitle } from '@/lib/studio-title';
 import {
   ALL_LOCAL_MODELS,
   useEngines,
@@ -19,6 +20,7 @@ import { Wordmark } from '@/components/brand';
 import { DOCK } from '@/lib/workbenches';
 import { unreadTotal, useUnread } from '@/lib/unread';
 import { AuthDialog } from '@/components/intro/auth-dialog';
+import { ProfileDialog, SidebarProfile } from './profile';
 import { Button } from '@/components/ui/button';
 
 /** Failures that come from hitting a browser limit rather than from our code. */
@@ -32,7 +34,7 @@ const RUNTIME_LIMIT = /Response|ArrayBuffer|supported range|out of memory|RangeE
  */
 export function StudioShell({
   children,
-  overviewHref = '/#workspace',
+  overviewHref = '/studio',
   homeHref = '/',
   onHome,
 }: {
@@ -49,8 +51,9 @@ export function StudioShell({
   const load = useEndpoints((state) => state.load);
   const loaded = useEndpoints((state) => state.loaded);
   const health = useEndpoints((state) => state.health);
-  const bootstrapped = useRef(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const pageTitle = useStudioTitle((state) => state.title);
   const unread = useUnread((state) => unreadTotal(state));
   const loadUnread = useUnread((state) => state.load);
 
@@ -65,19 +68,6 @@ export function StudioShell({
   useEffect(() => {
     void load();
   }, [load]);
-
-  /**
-   * A first visit gets a guest identity so the workbenches are usable without a
-   * form. After an explicit sign-out that must not happen: silently creating a
-   * new guest is why logging in again looked broken — the app never stayed in
-   * the signed-out state the login form needs.
-   */
-  useEffect(() => {
-    if (!ready || user || bootstrapped.current) return;
-    if (wasSignedOut()) return;
-    bootstrapped.current = true;
-    void enterAsGuest().catch((error) => toast(describeError(error), 'error'));
-  }, [ready, user, enterAsGuest]);
 
   const loadEngines = useEngines((state) => state.load);
   const models = useModelRuntime((state) => state.models);
@@ -121,12 +111,20 @@ export function StudioShell({
   const current = DOCK.find((item) =>
     item.href === '/studio' ? pathname === '/studio' : pathname.startsWith(item.href),
   );
-  const home = overviewHref.startsWith('#') ? overviewHref : homeHref;
+  const displayTitle = pageTitle || current?.title || '总览';
+  const exitToHome = () => {
+    useUnread.getState().reset();
+    logout();
+    if (onHome) onHome();
+    else window.location.assign(homeHref || '/');
+  };
+  // Home links use homeHref; overviewHref only addresses the dock's overview
+  // entry. Deriving "home" from overviewHref sent `#workspace` clicks straight
+  // back to the pane the reader was already on.
   const isActive = (href: string) =>
     href === '/studio'
       ? pathname === '/studio' || overviewHref.startsWith('#')
       : pathname.startsWith(href);
-  const initial = user ? user.handle.slice(0, 1).toUpperCase() : '·';
 
   return (
     <div className="studio-bg grain relative flex h-[100dvh] w-full overflow-hidden">
@@ -139,29 +137,41 @@ export function StudioShell({
       */}
       <aside
         data-shell-nav=""
-        className="relative z-10 hidden w-[232px] shrink-0 flex-col border-r border-white/15 bg-[#172421]/[0.88] text-[#f6f2ea] shadow-[18px_0_60px_-38px_rgba(18,28,24,0.75)] backdrop-blur-2xl xl:flex"
+        className="relative z-10 hidden w-[232px] shrink-0 flex-col border-r border-white/60 bg-white/45 text-ink shadow-[12px_0_44px_-34px_rgba(61,54,72,0.35)] backdrop-blur-2xl xl:flex"
       >
-        <div className="px-5 pb-5 pt-6">
-          <Link href={home} onClick={() => onHome?.()}>
-            <Wordmark tone="light" />
+        <div className="px-4 pb-3 pt-4">
+          <Link href={homeHref} onClick={() => onHome?.()}>
+            <Wordmark size="sm" showMark={false} />
           </Link>
-          <p className="mt-4 text-[10.5px] leading-relaxed text-[#f6f2ea]/40">
+          <p className="mt-2 pl-0 text-[9px] leading-relaxed text-muted/70">
             本地优先的多模态创作台
           </p>
         </div>
 
-        <div className="px-4">
+        <div data-uid={user?.uid ?? ''} data-user-id={user?.id ?? ''}>
+          <SidebarProfile
+            user={user}
+            onEdit={() => setProfileOpen(true)}
+            onLogin={() => setAuthOpen(true)}
+            onLogout={() => {
+              useUnread.getState().reset();
+              logout();
+            }}
+          />
+        </div>
+
+        <div className="px-4 pt-3">
           <Link
             href="/studio/create"
-            className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.05] px-3.5 py-2.5 text-[12.5px] text-[#f6f2ea]/85 transition-colors hover:bg-white/[0.09]"
+            className="flex items-center justify-between rounded-xl border border-[rgb(var(--ink))]/10 bg-white/55 px-3.5 py-2.5 text-[12.5px] text-ink/85 transition-colors hover:bg-white"
           >
             <span>新建创作</span>
             <Plus size={14} strokeWidth={1.8} />
           </Link>
         </div>
 
-        <nav aria-label="工作台切换" className="mt-7 flex-1 space-y-1 overflow-y-auto px-3">
-          <p className="px-3 pb-2 font-mono text-[9px] uppercase tracking-[0.28em] text-[#f6f2ea]/30">
+        <nav aria-label="工作台切换" className="mt-4 flex-1 space-y-1 overflow-y-auto px-3">
+          <p className="px-3 pb-2 font-mono text-[9px] uppercase tracking-[0.28em] text-muted/55">
             工作台
           </p>
           {DOCK.map((item) => {
@@ -174,16 +184,16 @@ export function StudioShell({
                 href={href}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-[13px] transition-colors duration-200',
+                  'group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2 text-[13px] transition-colors duration-200',
                   active
-                    ? 'text-[#172421]'
-                    : 'text-[#f6f2ea]/55 hover:bg-white/[0.06] hover:text-[#f6f2ea]',
+                    ? 'font-medium text-ink'
+                    : 'text-muted hover:bg-[rgb(var(--ink))]/[0.07] hover:text-ink',
                 )}
               >
                 {active ? (
                   <motion.span
                     layoutId="rail-active"
-                    className="absolute inset-0 rounded-xl bg-[#f6f2ea] shadow-[0_10px_24px_-16px_rgba(0,0,0,0.6)]"
+                    className="absolute inset-0 rounded-xl bg-white/75 ring-1 ring-[rgb(var(--accent))]/22 shadow-[0_8px_20px_-16px_rgba(61,54,72,0.45)] backdrop-blur-md"
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
                 ) : null}
@@ -197,11 +207,6 @@ export function StudioShell({
                     >
                       {unread > 99 ? '99+' : unread}
                     </span>
-                  ) : active ? (
-                    <motion.span
-                      layoutId="rail-dot"
-                      className="ml-auto h-1.5 w-1.5 rounded-full bg-[rgb(var(--copper))]"
-                    />
                   ) : null}
                 </span>
               </Link>
@@ -209,67 +214,25 @@ export function StudioShell({
           })}
         </nav>
 
-        <div className="space-y-3 border-t border-white/10 px-4 py-5">
-          <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-3">
-            <div className="flex items-center gap-2 text-[11.5px] text-[#f6f2ea]/75">
+        <div className="border-t border-[rgb(var(--ink))]/10 px-4 py-4">
+          <div className="rounded-xl border border-[rgb(var(--ink))]/10 bg-white/55 px-3.5 py-3">
+            <div className="flex items-center gap-2 text-[11.5px] text-ink/75">
               <span
                 className={cn(
                   'h-1.5 w-1.5 rounded-full',
-                  online ? 'bg-[#7fae8a]' : 'bg-[rgb(var(--copper))]',
+                  online ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--copper))]',
                 )}
               />
               {loaded ? (online ? '服务已连接' : '离线可用') : '正在读取配置'}
             </div>
-            <p className="mt-1.5 text-[10px] leading-relaxed text-[#f6f2ea]/35">
+            <p className="mt-1.5 text-[10px] leading-relaxed text-muted/70">
               数据与权重留在这台设备
             </p>
           </div>
-
-          <div
-            className="flex items-center gap-2.5"
-            data-uid={user?.uid ?? ''}
-            data-user-id={user?.id ?? ''}
-          >
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/10 font-mono text-[11.5px] text-[#f6f2ea]/85">
-              {initial}
-            </span>
-            <div className="min-w-0 flex-1 leading-tight">
-              <div className="truncate text-[12.5px] text-[#f6f2ea]/90">
-                {user?.handle ?? '未登录'}
-              </div>
-              <div className="truncate font-mono text-[9.5px] tracking-wider text-[#f6f2ea]/40">
-                {user?.uid ?? '—'}
-              </div>
-            </div>
-            {user ? (
-              <button
-                type="button"
-                onClick={() => {
-                  useUnread.getState().reset();
-                  logout();
-                }}
-                aria-label="退出登录"
-                className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[#f6f2ea]/50 transition-colors hover:bg-white/10 hover:text-[#f6f2ea]"
-              >
-                <LogOut size={13.5} strokeWidth={1.7} />
-              </button>
-            ) : null}
-          </div>
-
-          {user?.guest ? (
-            <button
-              type="button"
-              onClick={() => setAuthOpen(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 py-2 text-[11.5px] text-[#f6f2ea]/65 transition-colors hover:bg-white/[0.06] hover:text-[#f6f2ea]"
-            >
-              <LogIn size={12.5} strokeWidth={1.8} />
-              登录 / 注册
-            </button>
-          ) : null}
         </div>
       </aside>
 
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col bg-white/40 backdrop-blur-2xl">
         <header
           data-loading-model={active?.id ?? ''}
           className="relative hidden h-14 shrink-0 items-center gap-4 border-b border-white/45 bg-white/45 px-6 backdrop-blur-2xl xl:flex"
@@ -277,22 +240,23 @@ export function StudioShell({
           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.22em] text-muted/60">
             <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--copper))]" />
             <span>工作台</span>
-            <span className="text-muted/30">/</span>
+            {current ? <span className="text-muted/40">{current.index}</span> : null}
+          </div>
+
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
             <AnimatePresence mode="wait" initial={false}>
               <motion.span
-                key={current?.title ?? '总览'}
+                key={displayTitle}
+                data-studio-title=""
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.18 }}
-                className="text-ink/80"
+                className="block max-w-[36vw] truncate font-serif text-[15px] tracking-[0.01em] text-ink"
               >
-                {current?.title ?? '总览'}
+                {displayTitle}
               </motion.span>
             </AnimatePresence>
-            {current ? (
-              <span className="text-muted/40">{current.index}</span>
-            ) : null}
           </div>
 
           <span className="h-4 w-px bg-[rgb(var(--line))]" />
@@ -308,7 +272,7 @@ export function StudioShell({
               <span
                 className={cn(
                   'h-1.5 w-1.5 rounded-full',
-                  online ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]',
+                  online ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--copper))]',
                 )}
               />
               {loaded ? (online ? '服务已连接' : '离线演示') : '正在读取配置'}
@@ -320,14 +284,15 @@ export function StudioShell({
               local-first
             </span>
             <span className="h-4 w-px bg-[rgb(var(--line))]" />
-            <Link
-              href={home}
-              onClick={() => onHome?.()}
+            <button
+              type="button"
+              onClick={exitToHome}
+              aria-label="退出登录"
               className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] text-muted transition-colors hover:bg-[rgb(var(--sunken))]/60 hover:text-ink"
             >
-              <ArrowLeft size={12.5} strokeWidth={1.8} />
-              返回首页
-            </Link>
+              <LogOut size={12.5} strokeWidth={1.8} />
+              退出登录
+            </button>
           </div>
 
           {active ? (
@@ -357,8 +322,8 @@ export function StudioShell({
           data-loading-model={active?.id ?? ''}
           className="relative flex h-14 shrink-0 items-center gap-3 border-b border-white/45 bg-white/45 px-4 backdrop-blur-2xl xl:hidden"
         >
-          <Link href={home} onClick={() => onHome?.()} className="shrink-0">
-            <Wordmark compact />
+          <Link href={homeHref} onClick={() => onHome?.()} className="shrink-0">
+            <Wordmark compact showMark={false} />
           </Link>
 
           <div className="min-w-0 flex-1">
@@ -366,14 +331,15 @@ export function StudioShell({
               <span className="h-1 w-1 shrink-0 rounded-full bg-[rgb(var(--copper))]" />
               <AnimatePresence mode="wait" initial={false}>
                 <motion.span
-                  key={current?.title ?? '工作台'}
+                  key={displayTitle}
+                  data-studio-title=""
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -4 }}
                   transition={{ duration: 0.18 }}
                   className="truncate text-[13.5px] text-ink/90"
                 >
-                  {current?.title ?? '工作台'}
+                  {displayTitle}
                 </motion.span>
               </AnimatePresence>
             </div>
@@ -389,7 +355,7 @@ export function StudioShell({
               <span
                 className={cn(
                   'h-1.5 w-1.5 rounded-full',
-                  online ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]',
+                  online ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--copper))]',
                 )}
               />
               <span className="text-[11px] text-muted/85">
@@ -412,14 +378,12 @@ export function StudioShell({
           {user ? (
             <button
               type="button"
-              onClick={() => {
-                useUnread.getState().reset();
-                logout();
-              }}
+              onClick={exitToHome}
               aria-label="退出登录"
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted/70 transition-colors hover:bg-[rgb(var(--sunken))] hover:text-ink"
+              className="flex shrink-0 items-center gap-1.5 rounded-full px-2 py-1.5 text-[11.5px] text-muted transition-colors hover:bg-[rgb(var(--sunken))] hover:text-ink"
             >
               <LogOut size={13.5} strokeWidth={1.7} />
+              <span className="hidden sm:inline">退出登录</span>
             </button>
           ) : null}
 
@@ -476,21 +440,17 @@ export function StudioShell({
             </div>
           </div>
         ) : (
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={pathname}
-              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
-              transition={{
-                duration: reduceMotion ? 0 : 0.3,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-              className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8 xl:px-10"
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
+          /*
+            Route content is a plain keyed div with a CSS entrance. Framer's
+            JS-driven opacity used to own the visibility of this subtree: an
+            interrupted exit (AnimatePresence mode="wait") or a skipped entrance
+            left the outlet mounted but invisible, which reads as a blank page
+            until another route resets it. CSS animations always settle on the
+            final frame, so the content cannot get stuck hidden.
+          */
+          <div key={pathname} className="page-enter mx-auto w-full max-w-[1400px] px-4 py-6 md:px-8 md:py-8 xl:px-10">
+            {children}
+          </div>
         )}
       </motion.main>
 
@@ -513,13 +473,13 @@ export function StudioShell({
                 aria-current={active ? 'page' : undefined}
                 className={cn(
                   'group relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-2 transition-[transform,color] duration-300 ease-weave hover:-translate-y-0.5',
-                  active ? 'text-[rgb(var(--surface))]' : 'text-muted hover:text-ink',
+                  active ? 'font-medium text-[rgb(var(--accent))]' : 'text-muted hover:text-ink',
                 )}
               >
                 {active ? (
                   <motion.span
                     layoutId="dock-active"
-                    className="absolute inset-0 rounded-xl bg-[rgb(var(--accent))] shadow-[var(--shadow-accent)]"
+                    className="absolute inset-0 rounded-xl bg-white/80 ring-1 ring-[rgb(var(--accent))]/25 backdrop-blur-md"
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
                 ) : null}
@@ -530,7 +490,7 @@ export function StudioShell({
                       strokeWidth={1.7}
                       className={cn(
                         'transition-transform duration-300 group-hover:-translate-y-0.5',
-                        active ? 'text-[rgb(var(--surface))]' : 'text-muted/80',
+                        active ? 'text-[rgb(var(--accent))]' : 'text-muted/80',
                       )}
                     />
                     {item.href === '/studio/social' && unread > 0 ? (
@@ -552,6 +512,7 @@ export function StudioShell({
       </div>
 
       <AuthDialog open={authOpen} onClose={() => setAuthOpen(false)} />
+      <ProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} />
     </div>
   );
 }

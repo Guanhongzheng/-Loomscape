@@ -1,6 +1,11 @@
-import { redirect } from 'next/navigation';
+import type { Metadata } from 'next';
+import { StudioOverview } from '@/components/studio/overview';
 
-/** The workspace lives on the landing page, one screen below the intro. */
+export const metadata: Metadata = {
+  title: '总览 · 织境',
+};
+
+/** A standalone overview inside the workspace shell; no homepage reload. */
 export default function StudioIndex() {
-  redirect('/#workspace');
+  return <StudioOverview />;
 }

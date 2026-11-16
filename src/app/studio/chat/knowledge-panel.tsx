@@ -23,6 +23,9 @@ export function KnowledgePanel({
   onRag,
   docs,
   onDrop,
+  className,
+  bodyClassName,
+  footer,
 }: {
   title: string;
   onTitle: (next: string) => void;
@@ -34,9 +37,17 @@ export function KnowledgePanel({
   onRag: (next: boolean) => void;
   docs: DocumentSummary[];
   onDrop: (docId: string) => void;
+  className?: string;
+  bodyClassName?: string;
+  footer?: React.ReactNode;
 }) {
   return (
-    <Panel title="知识库" hint="入库后立刻参与检索，不上传服务器">
+    <Panel
+      title="知识库"
+      hint="入库后立刻参与检索，不上传服务器"
+      className={className}
+      bodyClassName={bodyClassName}
+    >
       <div className="space-y-3">
         <Input
           value={title}
@@ -101,6 +112,7 @@ export function KnowledgePanel({
           </ul>
         )}
       </div>
+      {footer}
     </Panel>
   );
 }

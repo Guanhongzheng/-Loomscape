@@ -20,6 +20,11 @@ describe('createShakeDetector', () => {
     expect(shake(detector, [100, 103, 100, 103, 100, 103, 100])).toBe(false);
   });
 
+  it('ignores deliberate-looking motion below the larger segment threshold', () => {
+    const detector = createShakeDetector();
+    expect(shake(detector, [100, 112, 100, 112, 100, 112, 100])).toBe(false);
+  });
+
   it('does not fire on a straight movement', () => {
     const detector = createShakeDetector();
     expect(shake(detector, [100, 140, 180, 220, 260, 300])).toBe(false);

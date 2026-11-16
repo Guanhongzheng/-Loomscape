@@ -263,7 +263,7 @@ export default function ImageWorkbench() {
                   <img
                     src={shot.src}
                     alt={shot.prompt}
-                    className={`w-full object-cover ${ASPECT_CLASS[aspect]} shadow-[0_12px_30px_-16px_rgba(30,42,60,0.45)]`}
+                    className={`w-full object-cover ${ASPECT_CLASS[aspect]} shadow-[0_12px_30px_-16px_rgba(61,54,72,0.45)]`}
                   />
 
                   <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-[rgba(20,26,36,0.55)] to-transparent px-3 pb-2.5 pt-8 opacity-0 transition-opacity duration-300 group-hover:opacity-100">

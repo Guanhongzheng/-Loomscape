@@ -13,7 +13,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEndpoints, channelReady } from '@/lib/endpoint-store';
 import { useAuth } from '@/lib/auth';
 import { createShakeDetector } from '@/lib/cursor/shake';
-import { sanitiseCursorPlan, type CursorAction } from '@/lib/cursor/actions';
+import { describeCursorPlan, sanitiseCursorPlan, type CursorAction } from '@/lib/cursor/actions';
 import { runCursorActions, type CursorExecutionContext } from '@/lib/cursor/registry';
 import { GEMMA_CURSOR_MODEL_ID, planWithCursorModel } from '@/lib/cursor/home-model';
 import { localPlanFor } from '@/lib/cursor/local-plan';
@@ -141,6 +141,7 @@ export function CursorMode() {
   const [positioned, setPositioned] = useState(false);
   const [anchor, setAnchor] = useState<Anchor>({ x: 0, y: 0 });
   const [menuPos, setMenuPos] = useState({ left: 0, top: 0 });
+  const [draggingMenu, setDraggingMenu] = useState(false);
   const [shape, setShape] = useState<Shape>('arrow');
   const [activity, setActivity] = useState<Activity>('idle');
   const [stepProgress, setStepProgress] = useState<{ done: number; total: number } | null>(null);
@@ -151,6 +152,19 @@ export function CursorMode() {
   const [toast, setToast] = useState('');
   const [hint, setHint] = useState(false);
   const [command, setCommand] = useState('');
+  const [pressing, setPressing] = useState(false);
+  const [pulseKey, setPulseKey] = useState(0);
+  const pressTimer = useRef(0);
+
+  /** A click has to look pressed: shrink for ~90ms and throw one ripple. */
+  const pulse = useCallback(() => {
+    setPressing(true);
+    setPulseKey((key) => key + 1);
+    window.clearTimeout(pressTimer.current);
+    pressTimer.current = window.setTimeout(() => setPressing(false), 130);
+  }, []);
+
+  useEffect(() => () => window.clearTimeout(pressTimer.current), []);
 
   const enginePrefs = useEngines((state) => state.prefs);
   const textResidentId = useModelRuntime(
@@ -191,6 +205,7 @@ export function CursorMode() {
   const selectedRef = useRef<HTMLElement | null>(null);
   const shakeRef = useRef(createShakeDetector());
   const shapeRef = useRef<Shape>('arrow');
+  const menuDragRef = useRef<{ dx: number; dy: number; id: number } | null>(null);
   const lastMoveRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const settleTimerRef = useRef(0);
   const hintTimerRef = useRef(0);
@@ -243,9 +258,47 @@ export function CursorMode() {
 
   const closeMenu = useCallback(() => {
     menuOpenRef.current = false;
+    menuDragRef.current = null;
+    setDraggingMenu(false);
     setMenuOpen(false);
     setPositioned(false);
     shakeRef.current.reset();
+  }, []);
+
+  const beginMenuDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('button, input, a')) return;
+    const menu = menuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    menuDragRef.current = {
+      dx: event.clientX - rect.left,
+      dy: event.clientY - rect.top,
+      id: event.pointerId,
+    };
+    setDraggingMenu(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, []);
+
+  const moveMenuDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = menuDragRef.current;
+    const menu = menuRef.current;
+    if (!drag || !menu || drag.id !== event.pointerId) return;
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    setMenuPos({
+      left: clamp(event.clientX - drag.dx, 8, Math.max(8, window.innerWidth - width - 8)),
+      top: clamp(event.clientY - drag.dy, 8, Math.max(8, window.innerHeight - height - 8)),
+    });
+  }, []);
+
+  const endMenuDrag = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (menuDragRef.current?.id !== event.pointerId) return;
+    menuDragRef.current = null;
+    setDraggingMenu(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }, []);
 
   const openMenuAt = useCallback((x: number, y: number) => {
@@ -407,19 +460,26 @@ export function CursorMode() {
       closeMenu();
       markActivity('executing');
       setStepProgress({ done: 0, total: steps.length });
-      showToast(`${label}规划 ${steps.length} 步，正在执行`);
+      showToast(describeCursorPlan(steps) || `${label}规划 ${steps.length} 步，正在执行`);
       const context: CursorExecutionContext = {
-        navigate: navigateAndWait,
+        navigate: async (href) => {
+          pulse();
+          await navigateAndWait(href);
+        },
         switchTab: async (tool) => {
           const button = document.querySelector<HTMLElement>(`[data-cursor-id="create.tab.${tool}"]`);
           if (!button) return false;
+          pulse();
           button.click();
           await sleep(180);
           return true;
         },
         fillPrompt: async (value) => {
           for (let attempt = 0; attempt < 10; attempt += 1) {
-            if (fillPromptValue(value)) return true;
+            if (fillPromptValue(value)) {
+              pulse();
+              return true;
+            }
             await sleep(100);
           }
           return false;
@@ -461,27 +521,39 @@ export function CursorMode() {
       );
       return result;
     },
-    [askPage, closeMenu, markActivity, navigateAndWait, showHighlight, showToast],
+    [askPage, closeMenu, markActivity, navigateAndWait, pulse, showHighlight, showToast],
   );
 
   const runModelCommand = useCallback(
     async (task: string) => {
       markActivity('planning');
       showStatus('正在让光标理解这句话…');
+      const complex = task.length >= 26 || /[，,。;；]|然后|接着|并且|同时|再/.test(task);
+      let usedLocal = false;
+      let usedApi = false;
       try {
-        const localSteps = await planWithCursorModel(
-          task,
-          pageContext(),
-          cursorMemoryLines(),
-        );
-        if (localSteps?.length) {
-          await executePlanSteps(localSteps, modelLabel, task);
-          return;
+        const store = useEndpoints.getState();
+        if (complex && !store.loaded) await store.load();
+        const apiFirst = complex && channelReady(useEndpoints.getState(), 'text');
+
+        if (!apiFirst) {
+          usedLocal = true;
+          const localSteps = await planWithCursorModel(
+            task,
+            pageContext(),
+            cursorMemoryLines(),
+          );
+          if (localSteps?.length) {
+            await executePlanSteps(localSteps, modelLabel, task);
+            return;
+          }
         }
 
-        showStatus(`${modelLabel === '本地理解' ? '本地模型未就绪' : modelLabel}未返回计划，尝试云端模型…`);
-        const store = useEndpoints.getState();
-        if (!store.loaded) await store.load();
+        showStatus(
+          apiFirst
+            ? '复杂任务交给云端模型规划…'
+            : `${modelLabel === '本地理解' ? '本地模型未就绪' : modelLabel}未返回计划，尝试云端模型…`,
+        );
         const ready = useEndpoints.getState();
         if (!channelReady(ready, 'text')) {
           throw new Error(
@@ -494,6 +566,7 @@ export function CursorMode() {
         if (!endpoint?.baseUrl || !endpoint.model) {
           throw new Error('还没有配置文本模型');
         }
+        usedApi = true;
         const response = await fetch('/api/cursor/plan', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -517,6 +590,19 @@ export function CursorMode() {
 
         await executePlanSteps(steps, 'API 模型', task);
       } catch (error) {
+        // An API failure on a complex task should not discard a locally loaded
+        // model; retry locally once before falling back to the rule planner.
+        if (usedApi && !usedLocal) {
+          const localSteps = await planWithCursorModel(
+            task,
+            pageContext(),
+            cursorMemoryLines(),
+          );
+          if (localSteps?.length) {
+            await executePlanSteps(localSteps, modelLabel, task);
+            return;
+          }
+        }
         const fallback = localPlanFor(task);
         if (fallback.length) {
           await executePlanSteps(fallback, '本地理解', task);
@@ -813,38 +899,51 @@ export function CursorMode() {
                 ? 'TEXT'
                 : 'READY';
 
+  /** The quick window cannot change settings, so hand the task to the full chat. */
+  const openFullChat = useCallback(() => {
+    // Keep the cursor on: the full page is where configuration lives, not a
+    // reason to switch the pointer off (that used to persist "off" and made
+    // every later launch start disabled).
+    closeMenu();
+    showToast('已切到聊天页');
+    router.push('/studio/chat');
+  }, [closeMenu, router, showToast]);
+
   return (
     <>
       <div
         ref={cursorRef}
         aria-hidden="true"
-        className={`cursor-mode-pointer ${enabled && finePointer ? 'is-visible' : ''}`}
+        className={`cursor-mode-pointer ${enabled && finePointer ? 'is-visible' : ''} ${
+          pressing ? 'is-pressing' : ''
+        }`}
         data-shape={shape}
         data-activity={activity}
         style={{ '--cursor-progress': `${progressDeg}deg` } as CSSProperties}
       >
         <span className="cursor-mode-pointer__aura" />
         <span className="cursor-mode-pointer__ring" />
+        <span key={pulseKey} className="cursor-mode-pointer__ripple" />
         <span className="cursor-mode-pointer__orbit" />
         <span className="cursor-mode-pointer__progress" />
         <span className="cursor-mode-pointer__body">
           <svg className="cursor-mode-pointer__arrow" viewBox="0 0 24 24">
             <defs>
               <linearGradient id="cursor-copper-fill" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stopColor="rgb(216 132 79)" />
-                <stop offset="0.55" stopColor="rgb(185 102 55)" />
-                <stop offset="1" stopColor="rgb(142 77 42)" />
+                <stop offset="0" stopColor="rgb(205 195 232)" />
+                <stop offset="0.55" stopColor="rgb(185 175 216)" />
+                <stop offset="1" stopColor="rgb(151 139 184)" />
               </linearGradient>
             </defs>
             <path
               d={CURSOR_PATH}
               fill="url(#cursor-copper-fill)"
-              stroke="rgb(70 45 26 / 0.28)"
+              stroke="rgb(75 64 92 / 0.28)"
               strokeWidth="0.55"
               strokeLinejoin="round"
             />
             <path d="M4.5 4.8 8.7 17l1.8-4.3 4.2-1.1L4.5 4.8Z" fill="rgb(255 255 255 / 0.62)" />
-            <circle cx="3.7" cy="2.7" r="0.95" fill="rgb(255 250 240 / 0.94)" />
+            <circle cx="3.7" cy="2.7" r="0.95" fill="rgb(250 247 255 / 0.94)" />
           </svg>
           <span className="cursor-mode-pointer__tag">AI</span>
           <span className="cursor-mode-pointer__caption">{activityLabel}</span>
@@ -892,16 +991,28 @@ export function CursorMode() {
       {visibleMenu ? (
         <div
           ref={menuRef}
-          className={`cursor-mode-menu ${positioned ? 'is-positioned' : ''}`}
+          className={`cursor-mode-menu ${positioned ? 'is-positioned' : ''} ${draggingMenu ? 'is-dragging' : ''}`}
           style={{ left: menuPos.left, top: menuPos.top }}
           role="dialog"
           aria-modal="false"
           aria-label="AI 光标功能菜单"
         >
-          <div className="cursor-mode-menu__head">
+          <div
+            className="cursor-mode-menu__head"
+            title="拖动菜单"
+            onPointerDown={beginMenuDrag}
+            onPointerMove={moveMenuDrag}
+            onPointerUp={endMenuDrag}
+            onPointerCancel={endMenuDrag}
+          >
             <span className="cursor-mode-menu__brand">
               <span className="cursor-mode-menu__dot" />
               AI CURSOR
+            </span>
+            <span className="cursor-mode-menu__grip" aria-hidden="true">
+              <i />
+              <i />
+              <i />
             </span>
             <span
               className="cursor-mode-menu__model"
@@ -966,10 +1077,17 @@ export function CursorMode() {
               工作台
             </button>
           </div>
+          <button type="button" className="cursor-mode-menu__full" onClick={openFullChat}>
+            <span>小窗只做快问，改配置去聊天页</span>
+            <b>{pathname === '/studio/chat' ? '已在聊天页' : '全屏模式 →'}</b>
+          </button>
           <div className="cursor-mode-menu__foot">
+            <button type="button" onClick={() => goTo('/studio/settings', '打开模型设置')}>
+              模型设置
+            </button>
             <span>晃一晃鼠标 / <kbd>Alt Shift K</kbd></span>
             <button type="button" onClick={() => { disableMode(); showToast('已恢复原生鼠标'); }}>
-              退出光标模式
+              退出
             </button>
           </div>
         </div>

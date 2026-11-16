@@ -17,7 +17,7 @@ const TASK_STEPS = [
 
 export function HomePreview() {
   return (
-    <div data-hero-preview className="neu grain relative overflow-hidden rounded-[26px] p-2 md:p-2.5">
+    <div data-hero-preview className="grain relative overflow-hidden rounded-[26px] border border-white/55 bg-white/66 p-2 shadow-[0_24px_60px_-40px_rgba(26,36,60,0.45)] backdrop-blur-xl md:p-2.5">
       <div className="flex items-center justify-between gap-3 px-2.5 py-1.5 md:px-3 md:py-2">
         <span className="flex items-center gap-1.5">
           {[0, 1, 2].map((dot) => (
@@ -29,8 +29,8 @@ export function HomePreview() {
             <LockKeyhole size={8} strokeWidth={1.8} />
             <span className="truncate">loomscape.site / brief</span>
           </span>
-          <span className="hidden shrink-0 items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-[#4d7a5c] sm:flex">
-            <span className="h-1 w-1 rounded-full bg-[#4d7a5c]" />
+          <span className="hidden shrink-0 items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.14em] text-[#4f5fa8] sm:flex">
+            <span className="h-1 w-1 rounded-full bg-[#4f5fa8]" />
             cursor live
           </span>
         </span>
@@ -74,7 +74,7 @@ export function HomePreview() {
             <span className="font-mono text-[8px] uppercase tracking-[0.14em] text-muted/60">
               cursor trace
             </span>
-            <span className="flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.12em] text-[#4d7a5c]">
+            <span className="flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-[0.12em] text-[#4f5fa8]">
               <CircleDot size={8} />
               可暂停 / 可接管
             </span>
@@ -86,7 +86,7 @@ export function HomePreview() {
                   className={
                     step.state === 'active'
                       ? 'grid h-4 w-4 shrink-0 place-items-center rounded-full border border-[rgb(var(--copper))]/45 text-[rgb(var(--copper))]'
-                      : 'grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#4d7a5c]/[0.12] text-[#4d7a5c]'
+                      : 'grid h-4 w-4 shrink-0 place-items-center rounded-full bg-[#4f5fa8]/[0.12] text-[#4f5fa8]'
                   }
                 >
                   {step.state === 'active' ? (

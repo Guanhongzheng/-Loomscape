@@ -52,3 +52,40 @@ export function sanitiseCursorPlan(value: unknown, maxSteps = 5): CursorAction[]
       : [];
   return raw.filter(isCursorAction).slice(0, maxSteps);
 }
+
+const TOOL_LABEL: Record<CreateTab, string> = {
+  text: '文本创作',
+  image: '图像创作',
+  video: '视频创作',
+  voice: '声音创作',
+  story: '故事创作',
+};
+
+export function describeCursorPlan(steps: CursorAction[]): string {
+  const parts = steps.map((step) => {
+    switch (step.action) {
+      case 'openTool':
+        return `打开${TOOL_LABEL[step.tool]}`;
+      case 'switchTab':
+        return `切到${TOOL_LABEL[step.tool]}`;
+      case 'navigate':
+        return '打开目标页面';
+      case 'openSettings':
+        return '打开模型设置';
+      case 'openWorkspace':
+        return '回到工作台';
+      case 'fillPrompt':
+        return `填入「${step.value.slice(0, 28)}」`;
+      case 'highlight':
+        return `高亮「${step.target.slice(0, 28)}」`;
+      case 'scrollTo':
+        return `滚动到「${step.target.slice(0, 28)}」`;
+      case 'askPage':
+        return '读一遍当前页';
+      default:
+        return '继续下一步';
+    }
+  });
+  if (!parts.length) return '';
+  return `好的，我会${parts.join('，然后')}。`;
+}

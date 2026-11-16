@@ -4,12 +4,13 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowUpRight, Cpu, HardDrive, MessagesSquare, Plus } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useStudioTitle } from '@/lib/studio-title';
 import { listChats, type ChatSummary } from '@/lib/chats';
 import { listMemories } from '@/lib/memory';
 import { listProjects, relativeTime, type Project } from '@/lib/projects';
 import { useMounted } from '@/hooks/use-mounted';
 import { EmptyState } from '@/components/studio/workbench';
-import { KIND_HREF, KIND_LABEL, WORKBENCHES } from '@/lib/workbenches';
+import { KIND_HREF, KIND_LABEL } from '@/lib/workbenches';
 import {
   ALL_LOCAL_MODELS,
   findModel,
@@ -102,19 +103,25 @@ export function StudioOverview() {
     : '';
   const storagePercent = Math.round(summary.storageRatio * 100);
   const maxKind = Math.max(...PROJECT_KINDS.map((kind) => summary.kindCounts[kind]), 1);
+  const pageTitle = `${greeting}${user ? `，${user.handle}` : ''}`;
+  const setStudioTitle = useStudioTitle((state) => state.setTitle);
+
+  useEffect(() => {
+    setStudioTitle(pageTitle);
+    return () => setStudioTitle('');
+  }, [pageTitle, setStudioTitle]);
 
   return (
     <div>
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="font-mono text-[10.5px] uppercase tracking-[0.3em] text-muted/80">
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.3em] text-muted/80">
             {today || '\u00a0'}
           </div>
-          <h1 className="mt-3 font-serif text-[36px] leading-[1.08] tracking-[0.01em] text-ink">
-            {greeting}
-            {user ? `，${user.handle}` : ''}
+          <h1 className="sr-only">
+            {pageTitle}
           </h1>
-          <p className="mt-3 text-[13.5px] text-muted">
+          <p className="mt-1.5 text-[12px] text-muted">
             从上次停下的地方继续，或开一条新的线。
           </p>
         </div>
@@ -238,7 +245,7 @@ export function StudioOverview() {
               local state · 本机状态
             </span>
             <span className="flex items-center gap-1.5 text-[10.5px] text-muted/65">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#4d7a5c]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[rgb(var(--accent))]" />
               本机
             </span>
           </div>
@@ -308,45 +315,7 @@ export function StudioOverview() {
         </section>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {WORKBENCHES.map((tile) => {
-          const Icon = tile.icon;
-          const count =
-            tile.href === '/studio/create'
-              ? summary.projectCount
-              : tile.href === '/studio/chat'
-                ? summary.chatCount
-                : null;
-          return (
-            <Link
-              key={tile.href}
-              href={tile.href}
-              data-workbench={tile.index}
-              className="neu-sm group flex items-center gap-3 rounded-xl p-4 hover:border-[rgb(var(--copper))]/45"
-            >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/50 bg-white/35 text-[rgb(var(--accent))] backdrop-blur-md">
-                <Icon size={15} strokeWidth={1.6} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] text-ink">{tile.title}</span>
-                <span className="mt-0.5 block truncate font-mono text-[8.5px] uppercase tracking-[0.1em] text-muted/60">
-                  {tile.meta}
-                </span>
-              </span>
-              {count !== null && count > 0 ? (
-                <span className="font-mono text-[10.5px] text-muted/65">{count}</span>
-              ) : (
-                <ArrowUpRight
-                  size={13}
-                  className="text-muted/35 transition-colors group-hover:text-[rgb(var(--copper))]"
-                />
-              )}
-            </Link>
-          );
-        })}
-      </div>
-
-      <div className="mt-10 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
         <section data-overview="recent">
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="font-serif text-[19px] text-ink">最近的痕迹</h2>

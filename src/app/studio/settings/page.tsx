@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -192,9 +192,9 @@ export default function SettingsPage() {
       />
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[200px_minmax(0,1fr)]">
-        <nav aria-label="设置分区" className="hidden xl:block">
-          <div className="sticky top-6 space-y-1 rounded-2xl border border-white/55 bg-white/45 p-2 shadow-[var(--shadow-neu-sm)] backdrop-blur-2xl">
-            <p className="px-3 pb-2 pt-1 font-mono text-[9px] uppercase tracking-[0.26em] text-muted/45">
+        <nav aria-label="设置分区" className="hidden xl:block xl:h-full">
+          <div className="sticky top-4 flex h-[calc(100dvh-12rem)] flex-col rounded-2xl border border-white/55 bg-white/45 p-2 shadow-[var(--shadow-neu-sm)] backdrop-blur-2xl">
+            <p className="flex h-11 shrink-0 items-center px-3 font-mono text-[9px] uppercase tracking-[0.26em] text-muted/45">
               设置
             </p>
             {SECTION_LINKS.map((item, index) => (
@@ -202,7 +202,7 @@ export default function SettingsPage() {
                 key={item.id}
                 type="button"
                 onClick={() => jump(item.id)}
-                className="flex w-full items-baseline gap-2.5 rounded-lg px-3 py-2 text-left text-[12.5px] text-muted transition-colors hover:bg-[rgb(var(--sunken))]/55 hover:text-ink"
+                className="flex min-h-0 flex-1 items-center gap-2.5 rounded-lg px-3 text-left text-[12.5px] text-muted transition-colors hover:bg-[rgb(var(--sunken))]/55 hover:text-ink"
               >
                 <span className="font-mono text-[9px] text-muted/40">
                   {String(index + 1).padStart(2, '0')}

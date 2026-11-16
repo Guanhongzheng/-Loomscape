@@ -491,7 +491,7 @@ export function EnginePanel() {
                 <span
                   className={cn(
                     'h-1.5 w-1.5 rounded-full',
-                    residents.length > 0 ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]/70',
+                    residents.length > 0 ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--copper))]/70',
                   )}
                 />
                 内存中

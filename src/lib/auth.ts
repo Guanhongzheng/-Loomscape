@@ -37,6 +37,16 @@ export type Profile = {
   id: string;
   uid: string;
   handle: string;
+  /** Shown instead of `handle` when set; identity still keys on id/uid. */
+  displayName?: string;
+  /** One line about the person. */
+  bio?: string;
+  /**
+   * A single 256×256 data URL. Uploading replaces it — there is no history on
+   * purpose, so the record never grows past one image.
+   */
+  avatar?: string;
+  profileUpdatedAt?: number;
   /**
    * Absent for guests on purpose. The users store has a unique index on
    * `email`, so an empty string made the second guest impossible to write:
@@ -50,6 +60,8 @@ export type Profile = {
 
 type StoredUser = Profile & { salt: string; hash: string };
 
+type ProfilePatch = { displayName?: string; bio?: string; avatar?: string };
+
 type AuthState = {
   user: Profile | null;
   ready: boolean;
@@ -58,6 +70,7 @@ type AuthState = {
   register: (email: string, password: string, handle?: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   enterAsGuest: () => Promise<void>;
+  updateProfile: (patch: ProfilePatch) => Promise<void>;
   logout: () => void;
 };
 
@@ -220,6 +233,41 @@ export const useAuth = create<AuthState>((set, getState) => ({
       set({ busy: false });
       throw error;
     }
+  },
+
+  updateProfile: async (patch) => {
+    const current = getState().user;
+    if (!current) throw new Error('请先登录或使用访客身份');
+    const stored = await get<StoredUser>(STORES.users, current.id);
+    if (!stored) throw new Error('找不到当前用户记录');
+
+    const next: StoredUser = { ...stored };
+
+    if (patch.displayName !== undefined) {
+      const value = patch.displayName.trim().slice(0, 24);
+      if (value) next.displayName = value;
+      else delete next.displayName;
+    }
+    if (patch.bio !== undefined) {
+      const value = patch.bio.trim().slice(0, 40);
+      if (value) next.bio = value;
+      else delete next.bio;
+    }
+    if (patch.avatar !== undefined) {
+      const value = patch.avatar;
+      if (!value) {
+        delete next.avatar;
+      } else if (/^data:image\/(png|jpeg|webp);base64,/.test(value) && value.length <= 400_000) {
+        next.avatar = value;
+      } else {
+        throw new Error('头像数据无效');
+      }
+    }
+    next.profileUpdatedAt = Date.now();
+
+    await put(STORES.users, next);
+    const { salt: _salt, hash: _hash, ...profile } = next;
+    set({ user: profile });
   },
 
   logout: () => {

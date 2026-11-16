@@ -26,28 +26,38 @@ export function Wordmark({
   className,
   compact = false,
   tone = 'ink',
+  size = 'md',
+  showMark = true,
 }: {
   className?: string;
   compact?: boolean;
   tone?: 'ink' | 'light';
+  /** `sm` is for the workspace rail, where vertical room belongs to the nav. */
+  size?: 'md' | 'sm';
+  /** The workspace uses the wordmark without the square glyph. */
+  showMark?: boolean;
 }) {
   const light = tone === 'light';
+  const small = size === 'sm';
   return (
     <span
       className={cn(
         'flex items-center gap-3',
-        light ? 'text-[#f6f2ea]' : 'text-ink',
+        light ? 'text-[#F2EEEA]' : 'text-ink',
         className,
       )}
     >
-      <Mark className="h-[28px] w-[28px]" />
+      {showMark ? <Mark className={small ? 'h-[22px] w-[22px]' : 'h-[28px] w-[28px]'} /> : null}
       <span className="flex flex-col leading-none">
-        <span className="font-serif text-[16px] tracking-[0.08em]">织境</span>
+        <span className={cn('font-serif tracking-[0.08em]', small ? 'text-[14px]' : 'text-[16px]')}>
+          织境
+        </span>
         {compact ? null : (
           <span
             className={cn(
-              'mt-1 font-mono text-[9px] uppercase tracking-[0.32em]',
-              light ? 'text-[#f6f2ea]/50' : 'text-muted/85',
+              'mt-1 font-mono uppercase',
+              small ? 'text-[7.5px] tracking-[0.28em]' : 'text-[9px] tracking-[0.32em]',
+              light ? 'text-[#F2EEEA]/50' : 'text-muted/85',
             )}
           >
             Loomscape

@@ -14,8 +14,8 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
           margin: 0,
           display: 'grid',
           placeItems: 'center',
-          background: '#f6f2ea',
-          color: '#1b1814',
+          background: '#F2EEEA',
+          color: '#3D3648',
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
         }}
@@ -43,9 +43,9 @@ export default function GlobalError({ error, reset }: { error: Error; reset: () 
               height: 36,
               padding: '0 18px',
               borderRadius: 999,
-              border: '1px solid #1e3f3a',
-              background: '#1e3f3a',
-              color: '#fffdf8',
+              border: '1px solid #6E628A',
+              background: '#6E628A',
+              color: '#F2EEEA',
               fontSize: 13,
               cursor: 'pointer',
             }}

@@ -87,6 +87,10 @@ export async function POST(request: NextRequest) {
     '你是织境（Loomscape）的浏览器 AI 光标规划器。',
     '你只输出一个 JSON 对象，不要 Markdown、解释或代码块。',
     '格式：{"steps":[{"action":"openTool","tool":"text"},{"action":"fillPrompt","value":"..."}]}',
+    '示例：',
+    '“打开文本创作” → {"steps":[{"action":"openTool","tool":"text"}]}',
+    '“高亮标题” → {"steps":[{"action":"highlight","target":"标题"}]}',
+    '“打开文本创作，写一个城市夜晚的提纲” → {"steps":[{"action":"openTool","tool":"text"},{"action":"fillPrompt","value":"城市夜晚的提纲"}]}',
     '允许的动作：',
     '- {"action":"openTool","tool":"text|image|video|voice|story"}',
     '- {"action":"switchTab","tool":"text|image|video|voice|story"}',
@@ -104,6 +108,7 @@ export async function POST(request: NextRequest) {
     '4. 记忆是最近完成的任务，只用于保持上下文连续，不要照抄；当前任务优先。',
     '5. 不输出坐标、选择器、脚本、密码、图片 URL 或外部 URL。',
     '6. 填提示词时只输出 fillPrompt，不要编造生成或提交动作。',
+    '7. 不确定目标时用 askPage，不要猜测。',
   ].join('\n');
 
   const prompt = JSON.stringify({ task, memory, page });

@@ -43,3 +43,34 @@ export function RetrievalPanel({ embedder }: { embedder: EmbedderInfo | null }) 
     </Panel>
   );
 }
+
+/** Same explanation, folded into the knowledge panel so the column heights match. */
+export function RetrievalDetails({ embedder }: { embedder: EmbedderInfo | null }) {
+  return (
+    <details className="mt-3 border-t border-[rgb(var(--line))]/60 pt-3 text-[11.5px] leading-relaxed text-muted">
+      <summary className="cursor-pointer list-none font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted/70 transition-colors hover:text-ink">
+        检索链路 · {embedder?.label ?? '读取中'}
+      </summary>
+      <ol className="mt-2 space-y-1.5">
+        <li className="flex gap-2">
+          <span className="font-mono text-[10px] text-[rgb(var(--copper))]/85">01</span>
+          <span>提问先嵌入，与本地片段计算余弦相似度。</span>
+        </li>
+        <li className="flex gap-2">
+          <span className="font-mono text-[10px] text-[rgb(var(--copper))]/85">02</span>
+          <span>取前 4 条，拼成带编号的上下文。</span>
+        </li>
+        <li className="flex gap-2">
+          <span className="font-mono text-[10px] text-[rgb(var(--copper))]/85">03</span>
+          <span>回答里的 [n] 与来源列表一一对应。</span>
+        </li>
+      </ol>
+      <Link
+        href="/studio/settings#models"
+        className="mt-2 inline-flex items-center gap-1 text-[11px] text-[rgb(var(--copper))]/90 hover:underline"
+      >
+        更换嵌入模型
+      </Link>
+    </details>
+  );
+}

@@ -1,7 +1,9 @@
 'use client';
 
+import { useEffect } from 'react';
 import { cn } from '@/lib/cn';
 import { useEndpoints, channelReady, needsVaultUnlock } from '@/lib/endpoint-store';
+import { useStudioTitle } from '@/lib/studio-title';
 import type { Channel } from '@/lib/providers';
 
 export function WorkbenchHeader({
@@ -15,20 +17,25 @@ export function WorkbenchHeader({
   description: string;
   actions?: React.ReactNode;
 }) {
+  const setStudioTitle = useStudioTitle((state) => state.setTitle);
+
+  useEffect(() => {
+    setStudioTitle(title);
+    return () => setStudioTitle('');
+  }, [setStudioTitle, title]);
+
   return (
-    <div className="mb-9 flex flex-wrap items-start justify-between gap-5 md:mb-10">
+    <div className="mb-4 flex flex-wrap items-start justify-between gap-4 md:mb-5">
       <div>
-        <div className="flex items-center gap-2.5 font-mono text-[10.5px] uppercase tracking-[0.3em] text-muted/75">
+        <div className="flex items-center gap-2 font-mono text-[9.5px] uppercase tracking-[0.3em] text-muted/70">
           <span>{index}</span>
-          <span className="h-px w-7 bg-[rgb(var(--line))]" />
+          <span className="h-px w-6 bg-[rgb(var(--line))]" />
           <span>workbench</span>
         </div>
-        <h1 className="mt-3 font-serif text-[30px] leading-tight tracking-[0.01em] text-ink md:text-[34px]">
-          {title}
-        </h1>
-        <p className="mt-2.5 max-w-[68ch] text-[13.5px] leading-relaxed text-muted">{description}</p>
+        <h1 className="sr-only">{title}</h1>
+        <p className="mt-1.5 max-w-[78ch] text-[12px] leading-relaxed text-muted">{description}</p>
       </div>
-      {actions ? <div className="mt-1 flex items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="mt-0.5 flex items-center gap-2">{actions}</div> : null}
     </div>
   );
 }
@@ -81,7 +88,7 @@ export function ChannelBadge({ channel, className }: { channel: Channel; classNa
         className,
       )}
     >
-      <span className={cn('h-1.5 w-1.5 rounded-full', ready ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--copper))]')} />
+      <span className={cn('h-1.5 w-1.5 rounded-full', ready ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--copper))]')} />
       {ready ? '已连接' : locked ? '待解锁' : '离线草稿'}
     </span>
   );

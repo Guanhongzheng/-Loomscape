@@ -17,10 +17,10 @@ export type ShakeOptions = {
  * ignore drags and editable targets before feeding samples.
  */
 export function createShakeDetector(options: ShakeOptions = {}) {
-  const minSegment = options.minSegment ?? 8;
+  const minSegment = options.minSegment ?? 16;
   const required = options.reversals ?? 3;
   const idleMs = options.idleMs ?? 260;
-  const cooldownMs = options.cooldownMs ?? 900;
+  const cooldownMs = options.cooldownMs ?? 1200;
 
   let lastX: number | null = null;
   let lastT = 0;
@@ -58,18 +58,22 @@ export function createShakeDetector(options: ShakeOptions = {}) {
       }
       const distance = Math.abs(dx);
       if (distance < 1.5) return false;
-      segment += distance;
       const nextDirection = Math.sign(dx);
       if (direction === 0) {
         direction = nextDirection;
+        segment = distance;
         return false;
       }
       if (nextDirection !== direction) {
         if (segment >= minSegment) {
           reversals += 1;
-          segment = 0;
         }
         direction = nextDirection;
+        // The new direction starts with this movement. Keeping the previous
+        // segment here would let several sub-threshold flicks add up.
+        segment = distance;
+      } else {
+        segment += distance;
       }
       if (reversals >= required) {
         resetMotion();

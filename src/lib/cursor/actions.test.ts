@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isCursorAction, sanitiseCursorPlan } from './actions';
+import { describeCursorPlan, isCursorAction, sanitiseCursorPlan } from './actions';
 import { runCursorActions, type CursorExecutionContext } from './registry';
 
 describe('cursor action protocol', () => {
@@ -40,6 +40,15 @@ describe('cursor action protocol', () => {
       'askPage',
       'askPage',
     ]);
+  });
+
+  it('explains a plan in one short conversational sentence', () => {
+    expect(
+      describeCursorPlan([
+        { action: 'openTool', tool: 'text' },
+        { action: 'fillPrompt', value: '城市夜晚的提纲' },
+      ]),
+    ).toBe('好的，我会打开文本创作，然后填入「城市夜晚的提纲」。');
   });
 
   it('executes in order and stops on failure', async () => {

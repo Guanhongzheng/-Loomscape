@@ -38,7 +38,7 @@ import { KnowledgePanel } from './knowledge-panel';
 import { Transcript } from './transcript';
 import { calcTurns, exchange, localHistory } from './turns';
 import { Composer } from './composer';
-import { RetrievalPanel } from './retrieval-panel';
+import { RetrievalDetails } from './retrieval-panel';
 import {
   ChatSessionPanel,
   SUGGESTIONS,
@@ -136,30 +136,41 @@ export default function ChatWorkbench() {
 
   const applySession = useCallback(
     (session: ChatSession) => {
+      // A stored transcript can predate a shape change (or be half written when
+      // the tab was closed). One malformed turn used to throw while rendering
+      // messages, which unmounted the whole page and left a blank canvas, so the
+      // restore path only lets well-formed turns through.
+      const turns: ChatTurn[] = (Array.isArray(session.turns) ? session.turns : []).filter(
+        (turn): turn is ChatTurn =>
+          Boolean(turn) &&
+          typeof turn.text === 'string' &&
+          (turn.role === 'user' || turn.role === 'assistant'),
+      );
+
       abortRef.current?.abort();
       stop();
       setLocalBusy(false);
       setActiveId(session.id);
-      customTitle.current = session.title;
+      customTitle.current = session.title ?? '';
       setEditingTitle(false);
       remembered.current.clear();
-      setCloudSources(sourcesOf(session.turns));
+      setCloudSources(sourcesOf(turns));
 
       // Cloud transcripts have to go back through useChat: it is what holds
       // the history the next request sends. Local ones live in this component.
-      if (session.turns.some((turn) => turn.mode === 'cloud')) {
+      if (turns.some((turn) => turn.mode === 'cloud')) {
         setLocalTurns([]);
         setMessages(
-          session.turns.map((turn) => ({
-            id: turn.id,
+          turns.map((turn) => ({
+            id: turn.id || `turn-${turn.at ?? Date.now()}`,
             role: turn.role,
             content: turn.text,
-            createdAt: new Date(turn.at),
+            createdAt: new Date(Number.isFinite(turn.at) ? turn.at : Date.now()),
           })),
         );
       } else {
         setMessages([]);
-        setLocalTurns(session.turns);
+        setLocalTurns(turns);
       }
     },
     [setMessages, stop],
@@ -480,8 +491,8 @@ export default function ChatWorkbench() {
         actions={<ChannelBadge channel="text" />}
       />
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[240px_minmax(0,1fr)_270px]">
-        <div className="order-2 xl:order-1 xl:max-h-[calc(100dvh-18rem)] xl:overflow-y-auto xl:pr-1">
+      <div className="grid grid-cols-1 gap-5 xl:h-[calc(100dvh-14rem)] xl:min-h-[520px] xl:grid-cols-[240px_minmax(0,1fr)_270px]">
+        <div className="order-2 flex min-h-0 flex-col xl:order-1 xl:h-full">
           <ChatSessionPanel
             sessions={sessions}
             activeId={activeId}
@@ -501,7 +512,7 @@ export default function ChatWorkbench() {
         </div>
 
         <Panel
-          className="order-1 flex h-[calc(100dvh-21rem)] min-h-[420px] flex-col md:min-h-[520px] xl:order-2 xl:h-[calc(100dvh-18rem)] xl:min-h-[560px]"
+          className="order-1 flex h-full min-h-[420px] flex-col md:min-h-[520px] xl:order-2"
           bodyClassName="flex min-h-0 flex-1 flex-col p-0"
           title="对话"
           hint={`${turns.filter((turn) => turn.role === 'assistant').length} 轮`}
@@ -538,8 +549,11 @@ export default function ChatWorkbench() {
           />
         </Panel>
 
-        <div className="order-3 space-y-5 xl:max-h-[calc(100dvh-18rem)] xl:overflow-y-auto xl:pr-1">
+        <div className="order-3 flex min-h-0 flex-col xl:h-full">
           <KnowledgePanel
+            className="flex h-full min-h-0 flex-col"
+            bodyClassName="min-h-0 flex-1 overflow-y-auto"
+            footer={<RetrievalDetails embedder={embedder} />}
             title={title}
             onTitle={setTitle}
             note={note}
@@ -551,8 +565,6 @@ export default function ChatWorkbench() {
             docs={docs}
             onDrop={(docId) => void dropDoc(docId)}
           />
-
-          <RetrievalPanel embedder={embedder} />
         </div>
       </div>
     </div>

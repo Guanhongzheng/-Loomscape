@@ -139,7 +139,7 @@ export function SchedulingCard() {
                   <div
                     className={cn(
                       'h-full rounded-full transition-[width] duration-300',
-                      pool === 'gpu' ? 'bg-[#4d7a5c]' : 'bg-[rgb(var(--accent))]/75',
+                      pool === 'gpu' ? 'bg-[rgb(var(--accent))]' : 'bg-[rgb(var(--accent))]/75',
                     )}
                     style={{ width: `${used > 0 ? Math.max(share, 2) : 0}%` }}
                   />

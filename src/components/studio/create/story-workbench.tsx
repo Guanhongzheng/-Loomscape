@@ -222,8 +222,8 @@ export default function StoryWorkbench() {
           </button>
         </div>
 
-        <div className="space-y-5">
-          <Panel title="结构" hint="从归档里取画面">
+        <div className="flex flex-col gap-5">
+          <Panel className="flex-1" title="结构" hint="从归档里取画面">
             {archive.length === 0 ? (
               <p className="text-[12px] leading-relaxed text-muted/75">
                 还没有归档画面。去图像创作台生成几张，回来就能挂进分镜。

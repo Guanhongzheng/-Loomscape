@@ -93,9 +93,9 @@ export function WeaveCanvas({ className }: { className?: string }) {
         uniforms: {
           uTime: { value: 0 },
           uPointer: { value: new THREE.Vector2(0, 0) },
-          uInk: { value: new THREE.Color('#3a4a63') },
-          uCopper: { value: new THREE.Color('#a8703f') },
-          uOpacity: { value: 0.34 },
+          uInk: { value: new THREE.Color('#2f3f66') },
+          uCopper: { value: new THREE.Color('#6f80d8') },
+          uOpacity: { value: 0.12 },
         },
         vertexShader: /* glsl */ `
           uniform float uTime;

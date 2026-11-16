@@ -19,6 +19,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const shots = path.join(root, '.artifacts', 'e2e');
 const PORT = process.env.E2E_PORT ?? '3311';
 const base = process.env.E2E_BASE ?? `http://localhost:${PORT}`;
+const nextBin = path.join(root, 'node_modules', 'next', 'dist', 'bin', 'next');
 
 mkdirSync(shots, { recursive: true });
 
@@ -61,9 +62,8 @@ async function ensureServer() {
   }
 
   console.log(`starting next start on ${PORT}`);
-  server = spawn('npx', ['next', 'start', '-p', PORT], {
+  server = spawn(process.execPath, [nextBin, 'start', '-p', PORT], {
     cwd: root,
-    shell: true,
     stdio: 'ignore',
   });
 
@@ -135,42 +135,49 @@ async function run() {
   await page.goto(base + '/', { waitUntil: 'networkidle' });
   await page.waitForFunction(
     () => {
-      const chrome = document.querySelectorAll('[data-intro-chrome].is-revealed').length;
-      const slide = document.querySelectorAll('[data-slide-reveal].is-revealed').length;
-      const boxes = Array.from(document.querySelectorAll('.weave-marquee'));
-      return (
-        chrome === 2 &&
-        slide === 5 &&
-        boxes.every((box) => Number(getComputedStyle(box).opacity) < 0.01)
-      );
+      const building =
+        document.querySelector('main')?.classList.contains('intro-chrome-building') ?? false;
+      const first = document.querySelector('.pager-slide');
+      const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
+      const visible = slides.filter(
+        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
+      ).length;
+      return !building && slides.length === 5 && visible === 5;
     },
     null,
     { timeout: 25_000 },
   );
   check('首页导航和首屏内容绘制完成', true);
-  const introBuild = await page.evaluate(() => ({
-    chrome: document.querySelectorAll('[data-intro-chrome].is-revealed').length,
-    revealed: document.querySelectorAll('[data-slide-reveal].is-revealed').length,
-    boxesHidden: Array.from(document.querySelectorAll('.weave-marquee')).every(
-      (box) => Number(getComputedStyle(box).opacity) < 0.01,
-    ),
-    cursorsVisible: Array.from(document.querySelectorAll('.weave-cursor')).filter(
-      (node) => Number(getComputedStyle(node).opacity) > 0.01,
-    ).length,
-    aiCursorVisible: Array.from(document.querySelectorAll('.ai-cursor, .cursor-mode-pointer')).some(
-      (node) => Number(getComputedStyle(node).opacity) > 0.01,
-    ),
-    h1Visible: Boolean(document.querySelector('h1')?.checkVisibility()),
-  }));
+  const introBuild = await page.evaluate(() => {
+    const first = document.querySelector('.pager-slide');
+    const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
+    return {
+      chromeStatic: Array.from(document.querySelectorAll('[data-intro-chrome]')).every(
+        (node) => Number(getComputedStyle(node).opacity) > 0.99,
+      ),
+      chromeBuilding:
+        document.querySelector('main')?.classList.contains('intro-chrome-building') ?? false,
+      revealed: slides.filter(
+        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
+      ).length,
+      boxes: document.querySelectorAll('.weave-marquee').length,
+      cursors: document.querySelectorAll('.weave-cursor').length,
+      aiCursorVisible: Array.from(document.querySelectorAll('.ai-cursor, .cursor-mode-pointer')).some(
+        (node) => Number(getComputedStyle(node).opacity) > 0.01,
+      ),
+      h1Visible: Boolean(document.querySelector('h1')?.checkVisibility()),
+    };
+  });
   check(
-    '每块画完光标和选框一起消失',
-    introBuild.chrome === 2 &&
+    '首页无光标画框，正文直接显示',
+    introBuild.chromeStatic &&
+      !introBuild.chromeBuilding &&
       introBuild.revealed === 5 &&
-      introBuild.boxesHidden &&
-      introBuild.cursorsVisible === 0 &&
+      introBuild.boxes === 0 &&
+      introBuild.cursors === 0 &&
       introBuild.aiCursorVisible &&
       introBuild.h1Visible,
-    `chrome=${introBuild.chrome} revealed=${introBuild.revealed} boxes=${introBuild.boxesHidden} cursors=${introBuild.cursorsVisible} ai=${introBuild.aiCursorVisible}`,
+    `static=${introBuild.chromeStatic} building=${introBuild.chromeBuilding} revealed=${introBuild.revealed} boxes=${introBuild.boxes} cursors=${introBuild.cursors} ai=${introBuild.aiCursorVisible}`,
   );
   await page.waitForTimeout(400);
 
@@ -187,7 +194,7 @@ async function run() {
       .then((value) => Number(value ?? -1));
   check('介绍页初始分区', (await introIndex()) === 0, `index=${await introIndex()}`);
 
-  await page.getByRole('button', { name: '能力', exact: true }).click();
+  await page.getByRole('button', { name: '对话', exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '1',
   );
@@ -205,20 +212,28 @@ async function run() {
   );
   check('介绍页上一页可点击', (await introIndex()) === 1);
 
-  await page.getByRole('button', { name: '前往关于' }).click();
+  await page.getByRole('button', { name: '前往光标' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '3',
   );
   check('介绍页底部分页点可点击', (await introIndex()) === 3);
 
-  await page.getByRole('button', { name: '前往简介' }).click();
+  await page.getByRole('button', { name: '前往创作' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '0',
   );
   check('介绍页可回到首屏', (await introIndex()) === 0);
 
-  // Entering the workspace is a vertical snap, not a route change.
+  // Entering the workspace is a vertical snap. A fresh visitor must first pass
+  // the homepage auth dialog; a returning guest goes straight through.
   await page.getByRole('button', { name: /进入工作台/ }).first().click();
+  const modalGuest = page
+    .locator('[role="dialog"]')
+    .getByRole('button', { name: /以访客身份继续/ });
+  if (await modalGuest.isVisible().catch(() => false)) {
+    await modalGuest.click();
+    await page.waitForTimeout(700);
+  }
   await page.waitForTimeout(1200);
 
   const snap = await page.evaluate(() => {
@@ -324,8 +339,10 @@ async function run() {
   const failedOverview = [];
   for (const [index, route] of overviewTargets) {
     await page.goto(base + '/#workspace', { waitUntil: 'networkidle' });
-    await page.waitForSelector(`[data-workbench="${index}"]`, { timeout: 10_000 });
-    await page.locator(`[data-workbench="${index}"]`).click();
+    // The overview tiles were removed as duplicates of the rail; drive the rail.
+    const rail = page.locator(`aside a[href="${route}"]`).first();
+    await rail.waitFor({ timeout: 10_000 });
+    await rail.click();
     try {
       await page.waitForURL('**' + route + '**', { timeout: 8_000 });
       overviewClicks += 1;
@@ -334,7 +351,7 @@ async function run() {
     }
   }
   check(
-    '总览工作台卡片可点击',
+    '左侧导航可切换工作台',
     overviewClicks === 4,
     failedOverview.length ? failedOverview.join(' | ') : `ok=${overviewClicks}`,
   );
@@ -355,6 +372,21 @@ async function run() {
     railClicks += 1;
   }
   check('桌面侧栏点击跳转', railClicks === 4, `ok=${railClicks}`);
+
+  // Returning to the overview must stay inside /studio; it must not load the
+  // homepage just to show its boot skeleton again.
+  await page.locator('aside a[href="/studio"]').first().click();
+  await page.waitForURL((url) => url.pathname === '/studio', { timeout: 8_000 });
+  await page.waitForTimeout(700);
+  const overviewReturn = await page.evaluate(() => ({
+    boot: document.querySelectorAll('.boot-curtain').length,
+    title: document.querySelector('[data-studio-title]')?.textContent?.trim() ?? '',
+  }));
+  check(
+    '总览不再显示首页骨架屏',
+    overviewReturn.boot === 0 && overviewReturn.title.includes('访客'),
+    JSON.stringify(overviewReturn),
+  );
 
   // Regression for the reported DataError: saving an endpoint used to fail
   // because the store expected an `id` that endpoints never had.
@@ -484,6 +516,11 @@ async function run() {
   const rag = await ragContext.newPage();
   await rag.goto(base + '/studio/chat', { waitUntil: 'networkidle' });
   await rag.waitForTimeout(800);
+  const ragGate = rag.locator('[data-auth-gate]');
+  if (await ragGate.count()) {
+    await ragGate.getByRole('button', { name: /以访客身份继续/ }).click();
+    await rag.waitForTimeout(900);
+  }
 
   const engineLine = await rag.locator('body').innerText();
   check('未配置端点时引擎显示未配置', engineLine.includes('云端 · 未配置'));
@@ -596,12 +633,13 @@ async function run() {
     ['创作', '/studio/create'],
     ['对话', '/studio/chat'],
     ['社交', '/studio/social'],
-    ['总览', '/'],
+    ['总览', '/studio'],
   ];
   let dockClicks = 0;
   for (const [label, route] of dockTargets) {
     await mobileDock.getByRole('link', { name: label, exact: true }).click();
     await small.waitForURL((url) => url.pathname === route, { timeout: 8_000 });
+    await small.waitForTimeout(300);
     dockClicks += 1;
   }
   check('移动端底部坞点击跳转', dockClicks === 4, `ok=${dockClicks}`);
@@ -630,6 +668,11 @@ async function run() {
 
   await vaultPage.goto(base + '/studio/settings', { waitUntil: 'networkidle' });
   await vaultPage.waitForTimeout(800);
+  const vaultGate = vaultPage.locator('[data-auth-gate]');
+  if (await vaultGate.count()) {
+    await vaultGate.getByRole('button', { name: /以访客身份继续/ }).click();
+    await vaultPage.waitForTimeout(900);
+  }
   await vaultPage.locator('input[type="password"]').first().fill('sk-vault-e2e-key-1234');
   await vaultPage.getByRole('button', { name: '保存并使用', exact: true }).click();
   await vaultPage.waitForTimeout(900);
@@ -698,11 +741,26 @@ async function run() {
   cursorPage.on('console', (message) => {
     if (message.type() === 'error') errors.push(`cursor console: ${message.text()}`);
   });
+  await cursorPage.goto(base + '/studio', { waitUntil: 'networkidle' });
+  const cursorGate = cursorPage.locator('[data-auth-gate]');
+  if (await cursorGate.count()) {
+    await cursorGate.getByRole('button', { name: /以访客身份继续/ }).click();
+    await cursorPage.waitForTimeout(800);
+  }
   await cursorPage.goto(base + '/', { waitUntil: 'domcontentloaded' });
   await cursorPage.waitForFunction(
-    () =>
-      document.querySelectorAll('[data-intro-chrome].is-revealed').length === 2 &&
-      document.querySelectorAll('[data-slide-reveal].is-revealed').length >= 5,
+    () => {
+      const first = document.querySelector('.pager-slide');
+      const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
+      const visible = slides.filter(
+        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
+      ).length;
+      return (
+        slides.length >= 5 &&
+        visible >= 5 &&
+        !document.querySelector('main')?.classList.contains('intro-chrome-building')
+      );
+    },
     null,
     { timeout: 25_000 },
   );
@@ -789,7 +847,9 @@ async function run() {
   }));
   check(
     'AI 菜单高亮当前页标题',
-    highlightState.highlight && highlightState.label.includes('AI 光标') && highlightState.url === '/',
+    highlightState.highlight &&
+      highlightState.label.includes('五个工具') &&
+      highlightState.url === '/',
     JSON.stringify(highlightState),
   );
 

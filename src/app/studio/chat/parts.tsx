@@ -186,6 +186,8 @@ export function ChatSessionPanel({
 }) {
   return (
     <Panel
+      className="flex h-full min-h-0 flex-col"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto"
       title="会话"
       hint={sessions.length ? `${sessions.length} 个` : '刷新后仍在'}
       action={
