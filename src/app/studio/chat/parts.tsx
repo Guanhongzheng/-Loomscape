@@ -20,6 +20,8 @@ export type Turn = {
   mode?: ChatMode;
   sources?: RecallHit[];
   tools?: Message;
+  /** Data-URL thumbnails of what the user attached. Live turns only. */
+  images?: string[];
 };
 
 export const SUGGESTIONS = [
@@ -99,11 +101,15 @@ export function cloudTurns(messages: Message[], sources: Map<number, RecallHit[]
 
     if (message.role !== 'assistant') {
       asked += 1;
+      const images = (message.experimental_attachments ?? [])
+        .map((item) => (typeof item?.url === 'string' ? item.url : ''))
+        .filter(Boolean);
       out.push({
         id: message.id,
         role: 'user',
         text,
         at: (message.createdAt ?? new Date()).getTime(),
+        ...(images.length ? { images } : {}),
       });
       continue;
     }

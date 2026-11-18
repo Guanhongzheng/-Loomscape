@@ -729,14 +729,14 @@ html.cursor-ai-mode [data-intro-ai-guide] {
     rgb(var(--copper) / 0.06) 34%,
     transparent 68%
   );
-  opacity: 0.5;
+  opacity: 0;
   transform: scale(0.92);
   transition: opacity 240ms ease, transform 240ms ease;
 }
 
 .cursor-mode-pointer[data-activity="planning"] .cursor-mode-pointer__aura,
 .cursor-mode-pointer[data-activity="executing"] .cursor-mode-pointer__aura {
-  opacity: 0.9;
+  opacity: 0.55;
   transform: scale(1.06);
   animation: cursor-aura-breathe 2.4s ease-in-out infinite;
 }
@@ -754,13 +754,13 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 
 .cursor-mode-pointer__ripple {
   position: absolute;
-  left: 3px;
-  top: 2px;
+  left: 0;
+  top: 0;
   z-index: 3;
-  width: 16px;
-  height: 16px;
-  margin: -8px 0 0 -8px;
-  border: 1.5px solid rgb(var(--copper) / 0.6);
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 1.5px solid rgb(var(--accent) / 0.55);
   border-radius: 999px;
   opacity: 0;
   pointer-events: none;
@@ -787,6 +787,10 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   display: block;
   width: 30px;
   height: 30px;
+  /* The path's tip lives at (3, 1.8) in a 24-unit viewBox; at 30px that is
+     (3.75, 2.25). Pulling the glyph by exactly that puts the tip on the
+     pointer coordinate — the box itself stays where the browser reports it. */
+  translate: -3.75px -2.25px;
   overflow: visible;
   transform-origin: 3px 2px;
   transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -797,6 +801,7 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 }
 
 .cursor-mode-pointer__ring {
+  display: none;
   position: absolute;
   left: -8px;
   top: -8px;
@@ -819,6 +824,7 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 }
 
 .cursor-mode-pointer__orbit {
+  display: none;
   position: absolute;
   left: -13px;
   top: -13px;
@@ -838,6 +844,7 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 }
 
 .cursor-mode-pointer__progress {
+  display: none;
   position: absolute;
   left: -9px;
   top: -9px;
@@ -871,19 +878,19 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 
 .cursor-mode-pointer__tag {
   position: absolute;
-  left: 25px;
-  top: -10px;
+  left: 15px;
+  top: 17px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 2px 6px 2px 5px;
-  border: 1px solid rgb(var(--copper) / 0.3);
+  border: 1px solid rgb(var(--accent) / 0.28);
   border-radius: 999px;
   background: linear-gradient(
     145deg,
-    rgb(var(--paper) / 0.98),
-    rgb(var(--paper) / 0.84)
+    rgb(255 255 255 / 0.96),
+    rgb(var(--paper) / 0.9)
   );
   box-shadow:
     0 6px 18px -12px rgb(61 54 72 / 0.45),
@@ -920,8 +927,8 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 
 .cursor-mode-pointer__caption {
   position: absolute;
-  left: 26px;
-  top: 20px;
+  left: 15px;
+  top: 35px;
   z-index: 3;
   padding: 1px 3px;
   border-radius: 2px;
@@ -1110,10 +1117,12 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   gap: 6px;
   padding: 0 9px;
   cursor: pointer;
-  border: 1px solid rgb(var(--line) / 0.9);
+  border: 1px solid rgb(255 255 255 / 0.75);
   border-radius: 999px;
-  background: rgb(var(--paper) / 0.88);
-  box-shadow: 0 8px 22px -16px rgb(40 30 20 / 0.45);
+  background: rgb(255 255 255 / 0.66);
+  backdrop-filter: blur(16px) saturate(1.05);
+  -webkit-backdrop-filter: blur(16px) saturate(1.05);
+  box-shadow: 0 10px 26px -18px rgb(40 34 56 / 0.4);
   color: rgb(var(--muted));
   font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: 0.04em;
@@ -1203,13 +1212,14 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   pointer-events: auto;
   transform: translateY(6px) scale(0.985);
   transform-origin: top left;
-  border: 1px solid rgb(120 102 80 / 0.22);
-  border-radius: 16px;
-  background:
-    linear-gradient(155deg, rgb(var(--paper) / 0.992), rgb(var(--paper) / 0.955));
+  border: 1px solid rgb(255 255 255 / 0.7);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 0.72);
+  backdrop-filter: blur(22px) saturate(1.05);
+  -webkit-backdrop-filter: blur(22px) saturate(1.05);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.82),
-    0 30px 80px -32px rgb(40 30 20 / 0.55),
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 30px 76px -34px rgb(40 34 56 / 0.42),
     0 2px 8px -4px rgb(40 30 20 / 0.18);
   backdrop-filter: blur(22px);
   transition: opacity 150ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1236,7 +1246,7 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   align-items: center;
   gap: 8px;
   padding: 12px 12px 9px;
-  border-bottom: 1px solid rgb(120 102 80 / 0.08);
+  border-bottom: 1px solid rgb(61 54 72 / 0.08);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -1375,8 +1385,8 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   gap: 6px;
   margin: 0 12px;
   padding: 5px 5px 5px 11px;
-  border: 1px solid rgb(120 102 80 / 0.22);
-  border-radius: 10px;
+  border: 1px solid rgb(61 54 72 / 0.14);
+  border-radius: 12px;
   background:
     linear-gradient(180deg, rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.5));
   box-shadow: inset 0 1px 2px rgb(40 30 20 / 0.035);
@@ -1487,7 +1497,7 @@ html.cursor-ai-mode [data-intro-ai-guide] {
   gap: 8px;
   margin-top: 1px;
   padding: 7px 12px 9px;
-  border-top: 1px solid rgb(120 102 80 / 0.12);
+  border-top: 1px solid rgb(61 54 72 / 0.1);
   color: rgb(var(--muted) / 0.66);
   font: 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -1564,6 +1574,46 @@ html.cursor-ai-mode [data-intro-ai-guide] {
 
 @media (prefers-reduced-motion: reduce) {
   .page-enter {
+    animation: none;
+  }
+}
+
+
+/* Modal entrance. CSS rather than a JS animation: a driven opacity can get
+   stuck when it is interrupted, and a dialog that never appears is worse than
+   a plain one. Ease-out with a hint of overshoot reads as "popped up". */
+.modal-scrim {
+  animation: modal-scrim-in 180ms ease-out both;
+}
+
+.modal-card {
+  animation: modal-card-in 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+}
+
+@keyframes modal-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-scrim,
+  .modal-card {
     animation: none;
   }
 }

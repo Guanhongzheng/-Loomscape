@@ -22,6 +22,7 @@ import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, useEndpoints } from '@/lib/endpoint-store';
 import { PRESETS, hasKey, presetFor, type Channel, type Endpoint } from '@/lib/providers';
+import { requestEmbeddingChange } from '@/lib/embedding-gate';
 import { probeEndpoint } from '@/lib/api';
 import {
   forget,
@@ -39,9 +40,24 @@ import { cn } from '@/lib/cn';
 
 const CHANNELS: Array<{ id: Channel; title: string; note: string }> = [
   { id: 'embedding', title: '嵌入', note: 'OpenAI 兼容的 /embeddings' },
-  { id: 'image', title: '图像', note: 'OpenAI Images 或 Stability' },
+  { id: 'image', title: '图像', note: 'OpenAI · 硅基 · 智谱 · 豆包 · 混元 · Stability' },
   { id: 'speech', title: '语音', note: 'Whisper 兼容的 /audio/transcriptions' },
 ];
+
+const BASE_URL_EXAMPLES: Record<Channel, string> = {
+  text: 'https://api.deepseek.com/v1',
+  embedding: 'https://api.siliconflow.cn/v1',
+  image: 'https://ark.cn-beijing.volces.com/api/v3',
+  speech: 'https://api.groq.com/openai/v1',
+};
+
+/** The path each channel appends, so the hint names the right suffix. */
+const BASE_URL_SUFFIX: Record<Channel, string> = {
+  text: '/chat/completions',
+  embedding: '/embeddings',
+  image: '/images/generations',
+  speech: '/audio/transcriptions',
+};
 
 const KIND_LABEL: Record<string, string> = {
   text: '文本',
@@ -125,7 +141,17 @@ export default function SettingsPage() {
 
   const save = async (channel: Channel) => {
     try {
-      await store(drafts[channel]);
+      const draft = drafts[channel];
+      if (channel === 'embedding') {
+        // A different embedder strands the stored vectors; ask before it bites.
+        const nextTag = hasKey(draft) ? `api:${draft.model}` : 'hash';
+        await requestEmbeddingChange(`${draft.label} · ${draft.model}`, nextTag, async () => {
+          await store(draft);
+          toast('嵌入端点已保存', 'success');
+        });
+        return;
+      }
+      await store(draft);
       toast(`${CHANNELS.find((item) => item.id === channel)?.title}端点已保存`, 'success');
     } catch (error) {
       toast(error instanceof Error ? error.message : '保存失败', 'error');
@@ -301,6 +327,10 @@ export default function SettingsPage() {
                             className="h-9 font-mono text-[12px]"
                             spellCheck={false}
                           />
+                          <p className="mt-1 text-[10.5px] leading-relaxed text-muted/70">
+                            只填到版本号为止，别带 {BASE_URL_SUFFIX[channel.id]} 这类路径。例：
+                            <span className="font-mono"> {BASE_URL_EXAMPLES[channel.id]}</span>
+                          </p>
                         </div>
 
                         <SecretInput

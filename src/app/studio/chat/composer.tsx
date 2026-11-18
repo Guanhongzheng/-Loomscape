@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowUp, Square } from 'lucide-react';
+import { useRef } from 'react';
+import { ArrowUp, Paperclip, Square, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/field';
 
@@ -21,6 +22,10 @@ export function Composer({
   ragLabel,
   localMode,
   vaultLocked = false,
+  attachments = [],
+  onPickFiles,
+  onRemoveAttachment,
+  visionReady = false,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -32,11 +37,67 @@ export function Composer({
   localMode: boolean;
   /** The stored key exists but the vault is locked; the cloud path is unusable. */
   vaultLocked?: boolean;
+  /** Compressed data URLs waiting to be sent with the next message. */
+  attachments?: Array<{ name: string; url: string }>;
+  onPickFiles?: (files: FileList | null) => void;
+  onRemoveAttachment?: (index: number) => void;
+  /** Cloud path is usable and a vision model is available. */
+  visionReady?: boolean;
 }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+
   return (
     <div className="shrink-0 border-t border-white/40 bg-white/30 px-4 py-3 backdrop-blur-2xl md:px-6">
       <div className="mx-auto w-full max-w-[880px]">
+        {attachments.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-2" data-attachments="">
+            {attachments.map((item, index) => (
+              <span
+                key={`${item.name}-${index}`}
+                className="relative h-16 w-16 overflow-hidden rounded-xl border border-white/70 bg-white/50"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={item.url} alt={item.name} className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => onRemoveAttachment?.(index)}
+                  aria-label={`移除 ${item.name}`}
+                  className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[rgb(var(--ink))]/70 text-white transition-colors hover:bg-[rgb(var(--ink))]"
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
         <div className="flex items-end gap-2">
+          {!localMode ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                multiple
+                className="hidden"
+                data-vision-input=""
+                onChange={(event) => {
+                  onPickFiles?.(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={!visionReady}
+                title={visionReady ? '添加参考图（最多 4 张）' : '先去设置里填写视觉模型'}
+                aria-label="添加图片"
+                className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/60 bg-white/45 text-muted transition-colors hover:bg-white/70 hover:text-ink disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Paperclip size={16} strokeWidth={1.8} />
+              </button>
+            </>
+          ) : null}
           <Textarea
             rows={1}
             value={value}
@@ -90,6 +151,7 @@ export function Composer({
         {localMode ? (
           <p className="mt-1.5 text-[11px] leading-relaxed text-muted/75">
             端侧模型：短问答与摘要可用，纯算式交给本地计算器；长文改写、多步推理建议换云端。
+            端侧模型不支持图像输入与工具调用。
           </p>
         ) : null}
       </div>

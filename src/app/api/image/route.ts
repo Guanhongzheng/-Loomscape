@@ -1,10 +1,9 @@
 import type { NextRequest } from 'next/server';
 import { assertPublicUrl, jsonError, originAllowed, resolve } from '@/lib/server/upstream';
+import { generateImages, type ImageResult } from '@/lib/image-batch';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-type ImageResult = { dataUrl?: string; url?: string };
 
 export async function POST(request: NextRequest) {
   if (!originAllowed(request)) return jsonError('来源不被允许', 403);
@@ -58,13 +57,26 @@ async function openaiImages(
   size: string,
   count: number,
 ): Promise<ImageResult[]> {
+  return generateImages({
+    model: config.model,
+    count,
+    fetchOnce: (n) => requestImages(config, prompt, size, n),
+  });
+}
+
+async function requestImages(
+  config: { baseUrl: string; apiKey: string; model: string },
+  prompt: string,
+  size: string,
+  n: number,
+): Promise<ImageResult[]> {
   const response = await fetch(`${config.baseUrl}/images/generations`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({ model: config.model, prompt, n: count, size }),
+    body: JSON.stringify({ model: config.model, prompt, n, size }),
   });
 
   if (!response.ok) {

@@ -8,6 +8,8 @@ import { textOf } from '@/components/studio/chat-parts';
 import { toast } from '@/components/ui/toast';
 import { useAuth } from '@/lib/auth';
 import { channelReady, needsVaultUnlock, useEndpoints } from '@/lib/endpoint-store';
+import { looksVisionCapable } from '@/lib/providers';
+import { compress } from '@/lib/image-utils';
 import { findModel, useEngines, useModelRuntime } from '@/lib/engines';
 import { streamLocal } from '@/lib/local-runtime';
 import {
@@ -39,6 +41,7 @@ import { Transcript } from './transcript';
 import { calcTurns, exchange, localHistory } from './turns';
 import { Composer } from './composer';
 import { RetrievalDetails } from './retrieval-panel';
+import { IndexStatus } from './index-status';
 import {
   ChatSessionPanel,
   SUGGESTIONS,
@@ -65,6 +68,7 @@ export default function ChatWorkbench() {
   const loadEngines = useEngines((state) => state.load);
 
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<Array<{ name: string; url: string }>>([]);
   const [localTurns, setLocalTurns] = useState<Turn[]>([]);
   const [localBusy, setLocalBusy] = useState(false);
   const [ragOn, setRagOn] = useState(true);
@@ -107,6 +111,7 @@ export default function ChatWorkbench() {
       baseUrl: endpoints.text.baseUrl,
       apiKey: endpoints.text.apiKey,
       model: endpoints.text.model,
+      visionModel: endpoints.text.visionModel ?? '',
       wire: endpoints.text.shape,
     }),
     onError: (err) => toast(err.message, 'error'),
@@ -296,7 +301,7 @@ export default function ChatWorkbench() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || busy || sending.current) return;
+    if ((!text && attachments.length === 0) || busy || sending.current) return;
     sending.current = true;
 
     // Stop before retrieval and before the input is cleared: the transcript
@@ -392,11 +397,54 @@ export default function ChatWorkbench() {
       setCloudSources((rows) => new Map(rows).set(pair, hits));
     }
     pendingContext.current = context;
+    const outgoing = attachments;
     try {
-      await append({ role: 'user', content: text });
+      await append(
+        { role: 'user', content: text },
+        outgoing.length
+          ? {
+              experimental_attachments: outgoing.map((item) => ({
+                name: item.name,
+                contentType: 'image/jpeg',
+                url: item.url,
+              })),
+            }
+          : undefined,
+      );
+      if (outgoing.length) setAttachments([]);
     } finally {
       sending.current = false;
     }
+  };
+
+  const pickFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const room = 4 - attachments.length;
+    if (room <= 0) {
+      toast('一条消息最多 4 张图', 'info');
+      return;
+    }
+    const picked = Array.from(files)
+      .filter((file) => /^image\/(png|jpeg|webp)$/.test(file.type))
+      .slice(0, room);
+    if (picked.length === 0) {
+      toast('只支持 PNG / JPEG / WebP', 'error');
+      return;
+    }
+
+    const next: Array<{ name: string; url: string }> = [];
+    for (const file of picked) {
+      const raw = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('读取图片失败'));
+        reader.readAsDataURL(file);
+      }).catch(() => '');
+      if (!raw) continue;
+      const small = await compress(raw, 720, 0.82).catch(() => raw);
+      next.push({ name: file.name, url: small });
+    }
+    if (next.length) setAttachments((rows) => [...rows, ...next].slice(0, 4));
   };
 
   const cancel = () => {
@@ -546,6 +594,17 @@ export default function ChatWorkbench() {
             ragLabel={ragOn ? (embedder?.label ?? '哈希') : '已关闭'}
             localMode={localMode}
             vaultLocked={!localMode && vaultLocked}
+            attachments={attachments}
+            onPickFiles={(files) => void pickFiles(files)}
+            onRemoveAttachment={(index) =>
+              setAttachments((rows) => rows.filter((_, i) => i !== index))
+            }
+            visionReady={
+              !localMode &&
+              !vaultLocked &&
+              Boolean(endpoints.text.apiKey) &&
+              (Boolean(endpoints.text.visionModel?.trim()) || looksVisionCapable(endpoints.text.model))
+            }
           />
         </Panel>
 
@@ -553,7 +612,12 @@ export default function ChatWorkbench() {
           <KnowledgePanel
             className="flex h-full min-h-0 flex-col"
             bodyClassName="min-h-0 flex-1 overflow-y-auto"
-            footer={<RetrievalDetails embedder={embedder} />}
+            footer={
+              <>
+                <IndexStatus refreshKey={docs.length} />
+                <RetrievalDetails embedder={embedder} />
+              </>
+            }
             title={title}
             onTitle={setTitle}
             note={note}

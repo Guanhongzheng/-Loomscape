@@ -24,7 +24,9 @@ describe('sanitiseMessages', () => {
       { role: 'assistant', content: '一共十二个字。' },
     ]);
     expect(rows.map((row) => row.role)).toEqual(['user', 'assistant']);
-    expect(rows.some((row) => row.content.includes('characters'))).toBe(false);
+    expect(
+      rows.some((row) => typeof row.content === 'string' && row.content.includes('characters')),
+    ).toBe(false);
   });
 
   it('collapses a duplicated turn so the model does not answer its echo', () => {
@@ -56,5 +58,49 @@ describe('sanitiseMessages', () => {
     );
     expect(rows).toHaveLength(24);
     expect(rows[rows.length - 1].content).toBe('第39句');
+  });
+});
+
+describe('sanitiseMessages images', () => {
+  const png = `data:image/png;base64,${'A'.repeat(40)}`;
+
+  it('keeps a data-url image on a user turn and allows image-only messages', () => {
+    const rows = sanitiseMessages([
+      { role: 'user', content: '', experimental_attachments: [{ url: png }] },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(Array.isArray(rows[0].content)).toBe(true);
+    const parts = rows[0].content as Array<{ type: string }>;
+    expect(parts.filter((part) => part.type === 'image')).toHaveLength(1);
+  });
+
+  it('drops remote images instead of letting the upstream fetch them', () => {
+    const rows = sanitiseMessages([
+      {
+        role: 'user',
+        content: '看这张图',
+        experimental_attachments: [{ url: 'https://example.com/a.png' }],
+      },
+    ]);
+    expect(rows[0].content).toBe('看这张图');
+  });
+
+  it('caps images per message at four', () => {
+    const rows = sanitiseMessages([
+      {
+        role: 'user',
+        content: '四张',
+        experimental_attachments: Array.from({ length: 6 }, () => ({ url: png })),
+      },
+    ]);
+    const parts = rows[0].content as Array<{ type: string }>;
+    expect(parts.filter((part) => part.type === 'image')).toHaveLength(1);
+  });
+
+  it('never attaches images to assistant turns', () => {
+    const rows = sanitiseMessages([
+      { role: 'assistant', content: '好了', experimental_attachments: [{ url: png }] },
+    ]);
+    expect(rows[0].content).toBe('好了');
   });
 });

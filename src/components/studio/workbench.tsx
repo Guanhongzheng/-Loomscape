@@ -48,6 +48,7 @@ export function Panel({
   children,
   className,
   bodyClassName,
+  variant = 'solid',
 }: {
   id?: string;
   title?: string;
@@ -56,9 +57,20 @@ export function Panel({
   children: React.ReactNode;
   className?: string;
   bodyClassName?: string;
+  /** `glass` lets the page gradient through instead of the opaque neu surface. */
+  variant?: 'solid' | 'glass';
 }) {
   return (
-    <section id={id} className={cn('neu rounded-2xl', className)}>
+    <section
+      id={id}
+      className={cn(
+        'rounded-2xl',
+        variant === 'glass'
+          ? 'grain after:opacity-[0.045] border border-white/70 bg-white/64 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.5),inset_0_-14px_28px_-22px_rgba(61,54,72,0.22),0_20px_44px_-34px_rgba(61,54,72,0.4)] backdrop-blur-2xl'
+          : 'neu',
+        className,
+      )}
+    >
       {title ? (
         <header className="flex items-center justify-between gap-3 border-b border-[rgb(var(--line))]/70 px-5 py-4 md:px-6">
           <div>

@@ -11,12 +11,15 @@ export function Segmented<T extends string>({
   onChange,
   className,
   size = 'md',
+  tint = false,
 }: {
   value: T;
   options: Array<{ value: T; label: string }>;
   onChange: (next: T) => void;
   className?: string;
   size?: 'sm' | 'md';
+  /** Lavender track instead of the inset grey, matching the overview cards. */
+  tint?: boolean;
 }) {
   const id = useId();
   const buttons = useRef<Array<HTMLButtonElement | null>>([]);
@@ -24,7 +27,13 @@ export function Segmented<T extends string>({
     <div
       role="tablist"
       aria-orientation="horizontal"
-      className={cn('neu-inset-sm inline-flex rounded-full p-1', className)}
+      className={cn(
+        'inline-flex rounded-full p-1',
+        tint
+          ? 'border border-[rgb(var(--copper)/0.5)] bg-[rgb(var(--copper)/0.3)] backdrop-blur-md'
+          : 'neu-inset-sm',
+        className,
+      )}
     >
       {options.map((option, index) => {
         const active = option.value === value;
@@ -57,7 +66,12 @@ export function Segmented<T extends string>({
             {active ? (
               <motion.span
                 layoutId={`seg-${id}`}
-                className="absolute inset-0 rounded-full border border-[rgb(var(--line))]/70 bg-[rgb(var(--surface))] shadow-[0_1px_2px_rgba(44,36,26,0.08)]"
+                className={cn(
+                  'absolute inset-0 rounded-full border shadow-[0_1px_2px_rgba(44,36,26,0.08)]',
+                  tint
+                    ? 'border-white/70 bg-white/85'
+                    : 'border-[rgb(var(--line))]/70 bg-[rgb(var(--surface))]',
+                )}
                 transition={{ type: 'spring', stiffness: 420, damping: 34 }}
               />
             ) : null}

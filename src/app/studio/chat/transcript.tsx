@@ -65,9 +65,27 @@ export function Transcript({
               >
                 {turn.role === 'user' ? (
                   <>
-                    <p className="max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-[rgb(var(--accent))] px-4 py-3 text-[13.5px] leading-[1.75] text-[rgb(var(--surface))] shadow-[var(--shadow-accent)]">
-                      {turn.text}
-                    </p>
+                    {turn.images?.length ? (
+                      <div className="mb-1.5 flex max-w-[78%] flex-wrap justify-end gap-1.5">
+                        {turn.images.map((src, index) => (
+                          <a
+                            key={`${turn.id}-img-${index}`}
+                            href={src}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="h-24 w-24 overflow-hidden rounded-xl border border-white/70 shadow-[var(--shadow-neu-sm)]"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={src} alt="附件" className="h-full w-full object-cover" />
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+                    {turn.text ? (
+                      <p className="max-w-[78%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-[rgb(var(--accent))] px-4 py-3 text-[13.5px] leading-[1.75] text-[rgb(var(--surface))] shadow-[var(--shadow-accent)]">
+                        {turn.text}
+                      </p>
+                    ) : null}
                     <span className="mt-1.5 pr-1 font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted/60">
                       {new Date(turn.at).toLocaleTimeString('zh-CN', {
                         hour: '2-digit',

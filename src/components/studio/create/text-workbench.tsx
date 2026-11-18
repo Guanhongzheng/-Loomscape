@@ -331,6 +331,7 @@ export default function TextWorkbench() {
               <div>
                 <div className="mb-2 text-[12.5px] font-medium tracking-wide text-muted">语气</div>
                 <Segmented
+                  tint
                   size="sm"
                   value={tone}
                   onChange={(next) => setTone(next)}

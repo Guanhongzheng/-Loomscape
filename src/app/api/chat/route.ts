@@ -3,7 +3,10 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { assertPublicUrl, jsonError, originAllowed, resolve } from '@/lib/server/upstream';
 import { buildLanguageModel } from '@/lib/server/model';
-import { sanitiseMessages, type ChatMessage } from '@/lib/server/messages';
+import { hasImages, sanitiseMessages, type ChatMessage } from '@/lib/server/messages';
+import { looksVisionCapable } from '@/lib/providers';
+import { measureText } from '@/lib/text-metrics';
+import { titleVariants } from '@/lib/title-variants';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +42,8 @@ export async function POST(request: NextRequest) {
         apiKey?: string;
         model?: string;
         wire?: string;
+        /** Optional model for turns that carry an image. */
+        visionModel?: string;
       }
     | null;
 
@@ -56,10 +61,19 @@ export async function POST(request: NextRequest) {
     return jsonError(error instanceof Error ? error.message : '端点不可用', 400);
   }
 
+  // Images change which model can answer. The endpoint (baseUrl / key) stays
+  // the same: vision is a message shape, not a fifth channel.
+  const visionModel = (body.visionModel ?? '').trim();
+  const carriesImage = hasImages(messages);
+  if (carriesImage && !visionModel && !looksVisionCapable(config.model)) {
+    return jsonError('当前文本模型未配置视觉能力，请在设置里填写「视觉模型」。', 412);
+  }
+  const modelId = carriesImage ? visionModel || config.model : config.model;
+
   const model = buildLanguageModel({
     baseUrl: config.baseUrl,
     apiKey: config.apiKey,
-    model: config.model,
+    model: modelId,
     wire: body.wire,
   });
 
@@ -91,17 +105,7 @@ export async function POST(request: NextRequest) {
         parameters: z.object({
           text: z.string().describe('需要测量的正文'),
         }),
-        execute: async ({ text }) => {
-          const paragraphs = text.split(/\n+/).filter((line) => line.trim().length > 0);
-          const sentences = text.split(/[。！？!?；;]/).filter((line) => line.trim().length > 0);
-          const longest = sentences.reduce((max, line) => Math.max(max, line.trim().length), 0);
-          return {
-            characters: text.replace(/\s/g, '').length,
-            paragraphs: paragraphs.length,
-            longestSentence: longest,
-            readSeconds: Math.round((text.length / 5.2) * 10) / 10,
-          };
-        },
+        execute: async ({ text }) => measureText(text),
       }),
       title_variants: tool({
         description: '围绕一个主题给出若干标题备选，用于命名作品或章节。',
@@ -109,18 +113,7 @@ export async function POST(request: NextRequest) {
           subject: z.string().describe('主题或内容摘要'),
           count: z.number().min(1).max(5).optional().describe('需要几个备选，默认 3'),
         }),
-        execute: async ({ subject, count }) => {
-          const total = count ?? 3;
-          const clean = subject.trim().slice(0, 18) || '未命名';
-          const patterns = [
-            (s: string) => `${s}，以及它留下的痕迹`,
-            (s: string) => `关于${s}的第二次说明`,
-            (s: string) => `${s}：一份不合时宜的记录`,
-            (s: string) => `在${s}结束之前`,
-            (s: string) => `${s}的另一种用法`,
-          ];
-          return { subject: clean, titles: patterns.slice(0, total).map((fn) => fn(clean)) };
-        },
+        execute: async ({ subject, count }) => titleVariants(subject, count ?? 3),
       }),
     },
   });

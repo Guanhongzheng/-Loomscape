@@ -85,6 +85,17 @@ export function CloudEndpointForm({
         </div>
 
         <div>
+          <label className={fieldLabel}>视觉模型（可选）</label>
+          <Input
+            value={draft.visionModel ?? ''}
+            onChange={(event) => patch({ visionModel: event.target.value })}
+            placeholder="留空则用上方模型；纯文本模型请务必填写"
+            className="h-9 font-mono text-[12px]"
+            spellCheck={false}
+          />
+        </div>
+
+        <div>
           <label className={fieldLabel}>API Key</label>
           <Input
             type="password"

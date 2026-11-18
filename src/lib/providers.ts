@@ -25,7 +25,27 @@ export type Endpoint = {
   updatedAt: number;
   /** The stored key is encrypted and the vault is locked; never persisted. */
   sealed?: boolean;
+  /**
+   * Optional model used when the message carries an image. Shares baseUrl and
+   * apiKey with `model`; left empty, a vision-capable `model` is used as-is.
+   */
+  visionModel?: string;
 };
+
+/**
+ * A cheap capability guess. It exists so someone who already runs gpt-4o does
+ * not have to type a vision model before the paperclip works; it is never used
+ * to block a request that names one explicitly.
+ */
+const VISION_MODEL =
+  /gpt-4o(?!-tts)|gpt-4\.1|gpt-5|gemini|qwen.*vl|glm-4v|claude-(3|4)|doubao.*vision|internvl|llava/i;
+const AUDIO_ONLY = /tts|audio|transcribe|embedding|rerank/i;
+
+export function looksVisionCapable(model: string): boolean {
+  const id = model.trim();
+  if (!id || AUDIO_ONLY.test(id)) return false;
+  return VISION_MODEL.test(id);
+}
 
 type Preset = {
   id: string;
@@ -92,6 +112,36 @@ export const PRESETS: Record<Channel, Preset[]> = {
       shape: 'openai-image',
     },
     {
+      id: 'siliconflow-image',
+      label: '硅基流动 SiliconFlow',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      models: ['black-forest-labs/FLUX.1-schnell', 'Kwai-Kolors/Kolors'],
+      shape: 'openai-image',
+      note: '国内直连；FLUX 与 Kolors 都走 /images/generations',
+    },
+    {
+      id: 'zhipu-image',
+      label: '智谱 CogView',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      models: ['cogview-4', 'cogview-4-flash'],
+      shape: 'openai-image',
+    },
+    {
+      id: 'ark-image',
+      label: '火山方舟 · 豆包 Seedream',
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      models: ['doubao-seedream-3-0-t2i-250415'],
+      shape: 'openai-image',
+      note: '模型处填控制台里的推理接入点 ID',
+    },
+    {
+      id: 'hunyuan-image',
+      label: '腾讯混元 生图',
+      baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+      models: ['hy-image-v3'],
+      shape: 'openai-image',
+    },
+    {
       id: 'stability',
       label: 'Stability AI',
       baseUrl: 'https://api.stability.ai',
@@ -116,6 +166,36 @@ export const PRESETS: Record<Channel, Preset[]> = {
       note: '国内直连，1024 维，适合中文作品库',
     },
     {
+      id: 'siliconflow-embedding',
+      label: '硅基流动 SiliconFlow',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      models: ['BAAI/bge-m3', 'BAAI/bge-large-zh-v1.5'],
+      shape: 'openai-embedding',
+      note: 'bge 系列有免费额度，适合本地作品库',
+    },
+    {
+      id: 'zhipu-embedding',
+      label: '智谱 Embedding',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      models: ['embedding-3'],
+      shape: 'openai-embedding',
+    },
+    {
+      id: 'jina-embedding',
+      label: 'Jina AI',
+      baseUrl: 'https://api.jina.ai/v1',
+      models: ['jina-embeddings-v3'],
+      shape: 'openai-embedding',
+      note: '多语言，有免费额度',
+    },
+    {
+      id: 'hunyuan-embedding',
+      label: '腾讯混元 Embedding',
+      baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+      models: ['hunyuan-embedding'],
+      shape: 'openai-embedding',
+    },
+    {
       id: 'openai-embedding',
       label: 'OpenAI Embedding',
       baseUrl: 'https://api.openai.com/v1',
@@ -135,7 +215,30 @@ export const PRESETS: Record<Channel, Preset[]> = {
       id: 'openai-audio',
       label: 'OpenAI Whisper',
       baseUrl: 'https://api.openai.com/v1',
-      models: ['whisper-1'],
+      models: ['whisper-1', 'gpt-4o-transcribe'],
+      shape: 'openai-audio',
+    },
+    {
+      id: 'groq-audio',
+      label: 'Groq Whisper',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      models: ['whisper-large-v3-turbo', 'whisper-large-v3'],
+      shape: 'openai-audio',
+      note: '速度最快，有免费额度',
+    },
+    {
+      id: 'siliconflow-audio',
+      label: '硅基流动 SenseVoice',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      models: ['FunAudioLLM/SenseVoiceSmall'],
+      shape: 'openai-audio',
+      note: '中文识别好，兼容 /audio/transcriptions',
+    },
+    {
+      id: 'deepinfra-audio',
+      label: 'DeepInfra Whisper',
+      baseUrl: 'https://api.deepinfra.com/v1/openai',
+      models: ['openai/whisper-large-v3'],
       shape: 'openai-audio',
     },
     {
@@ -158,6 +261,7 @@ export const EMPTY_ENDPOINTS: Record<Channel, Endpoint> = {
     model: 'gpt-4o-mini',
     shape: 'openai-chat',
     updatedAt: 0,
+    visionModel: '',
   },
   image: {
     channel: 'image',

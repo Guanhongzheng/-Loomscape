@@ -137,29 +137,27 @@ async function run() {
     () => {
       const building =
         document.querySelector('main')?.classList.contains('intro-chrome-building') ?? false;
-      const first = document.querySelector('.pager-slide');
-      const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
-      const visible = slides.filter(
-        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
-      ).length;
-      return !building && slides.length === 5 && visible === 5;
+      const cover = document.querySelector('.pager-slide [data-cover] h1');
+      return (
+        !building &&
+        Boolean(cover) &&
+        cover.checkVisibility() &&
+        (cover.textContent ?? '').includes('织境')
+      );
     },
     null,
     { timeout: 25_000 },
   );
   check('首页导航和首屏内容绘制完成', true);
   const introBuild = await page.evaluate(() => {
-    const first = document.querySelector('.pager-slide');
-    const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
+    const cover = document.querySelector('.pager-slide [data-cover] h1');
     return {
+      coverVisible: Boolean(cover?.checkVisibility()),
       chromeStatic: Array.from(document.querySelectorAll('[data-intro-chrome]')).every(
         (node) => Number(getComputedStyle(node).opacity) > 0.99,
       ),
       chromeBuilding:
         document.querySelector('main')?.classList.contains('intro-chrome-building') ?? false,
-      revealed: slides.filter(
-        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
-      ).length,
       boxes: document.querySelectorAll('.weave-marquee').length,
       cursors: document.querySelectorAll('.weave-cursor').length,
       aiCursorVisible: Array.from(document.querySelectorAll('.ai-cursor, .cursor-mode-pointer')).some(
@@ -172,12 +170,12 @@ async function run() {
     '首页无光标画框，正文直接显示',
     introBuild.chromeStatic &&
       !introBuild.chromeBuilding &&
-      introBuild.revealed === 5 &&
+      introBuild.coverVisible &&
       introBuild.boxes === 0 &&
       introBuild.cursors === 0 &&
       introBuild.aiCursorVisible &&
       introBuild.h1Visible,
-    `static=${introBuild.chromeStatic} building=${introBuild.chromeBuilding} revealed=${introBuild.revealed} boxes=${introBuild.boxes} cursors=${introBuild.cursors} ai=${introBuild.aiCursorVisible}`,
+    `static=${introBuild.chromeStatic} building=${introBuild.chromeBuilding} cover=${introBuild.coverVisible} boxes=${introBuild.boxes} cursors=${introBuild.cursors} ai=${introBuild.aiCursorVisible}`,
   );
   await page.waitForTimeout(400);
 
@@ -200,25 +198,26 @@ async function run() {
   );
   check('介绍页顶部导航可点击', (await introIndex()) === 1);
 
+  // The cover is slide 0, so the tour now sits at 1–4.
   await page.getByRole('button', { name: '下一页' }).click();
-  await page.waitForFunction(
-    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '2',
-  );
-  check('介绍页下一页可点击', (await introIndex()) === 2);
-
-  await page.getByRole('button', { name: '上一页' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '1',
   );
-  check('介绍页上一页可点击', (await introIndex()) === 1);
+  check('介绍页下一页可点击', (await introIndex()) === 1);
+
+  await page.getByRole('button', { name: '上一页' }).click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '0',
+  );
+  check('介绍页上一页可点击', (await introIndex()) === 0);
 
   await page.getByRole('button', { name: '前往光标' }).click();
   await page.waitForFunction(
-    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '3',
+    () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '4',
   );
-  check('介绍页底部分页点可点击', (await introIndex()) === 3);
+  check('介绍页底部分页点可点击', (await introIndex()) === 4);
 
-  await page.getByRole('button', { name: '前往创作' }).click();
+  await page.getByRole('button', { name: '前往首页' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-intro-index]')?.getAttribute('data-intro-index') === '0',
   );
@@ -377,10 +376,25 @@ async function run() {
   // homepage just to show its boot skeleton again.
   await page.locator('aside a[href="/studio"]').first().click();
   await page.waitForURL((url) => url.pathname === '/studio', { timeout: 8_000 });
-  await page.waitForTimeout(700);
+  // The title is published by an effect, so on a cold dev compile it can trail
+  // the navigation by a few hundred ms. Wait for the property we assert rather
+  // than a fixed delay; the assertion itself is unchanged.
+  // Two slots exist (desktop bar + mobile header) and the crossfade keeps the
+  // outgoing one alive for a beat, so read all of them instead of the first.
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll('[data-studio-title]')).some((node) =>
+          (node.textContent ?? '').includes('访客'),
+        ),
+      { timeout: 5_000 },
+    )
+    .catch(() => undefined);
   const overviewReturn = await page.evaluate(() => ({
     boot: document.querySelectorAll('.boot-curtain').length,
-    title: document.querySelector('[data-studio-title]')?.textContent?.trim() ?? '',
+    title: Array.from(document.querySelectorAll('[data-studio-title]'))
+      .map((node) => node.textContent?.trim() ?? '')
+      .join(' | '),
   }));
   check(
     '总览不再显示首页骨架屏',
@@ -748,16 +762,14 @@ async function run() {
     await cursorPage.waitForTimeout(800);
   }
   await cursorPage.goto(base + '/', { waitUntil: 'domcontentloaded' });
+  // A hard reload guarantees a fresh mount: the pointer preference is read once
+  // in an effect, and an in-page navigation can leave it at its initial value.
+  await cursorPage.reload({ waitUntil: 'domcontentloaded' });
   await cursorPage.waitForFunction(
     () => {
-      const first = document.querySelector('.pager-slide');
-      const slides = first ? Array.from(first.querySelectorAll('[data-slide-reveal]')) : [];
-      const visible = slides.filter(
-        (node) => node.checkVisibility() && Number(getComputedStyle(node).opacity) > 0.99,
-      ).length;
+      const cover = document.querySelector('.pager-slide [data-cover] h1');
       return (
-        slides.length >= 5 &&
-        visible >= 5 &&
+        Boolean(cover?.checkVisibility()) &&
         !document.querySelector('main')?.classList.contains('intro-chrome-building')
       );
     },
@@ -842,13 +854,18 @@ async function run() {
   await cursorPage.waitForTimeout(800);
   const highlightState = await cursorPage.evaluate(() => ({
     highlight: document.querySelector('.cursor-mode-highlight')?.classList.contains('is-visible'),
-    label: document.querySelector('.cursor-mode-highlight span')?.textContent || '',
+    label: (document.querySelector('.cursor-mode-highlight span')?.textContent || '')
+      .replace(/\s+/g, '')
+      .trim(),
+    h1: (document.querySelector('h1')?.textContent || '').replace(/\s+/g, '').trim(),
     url: location.pathname,
   }));
   check(
     'AI 菜单高亮当前页标题',
     highlightState.highlight &&
-      highlightState.label.includes('五个工具') &&
+      highlightState.label.length > 0 &&
+      (highlightState.h1.startsWith(highlightState.label.slice(0, 4)) ||
+        highlightState.label.startsWith(highlightState.h1.slice(0, 4))) &&
       highlightState.url === '/',
     JSON.stringify(highlightState),
   );

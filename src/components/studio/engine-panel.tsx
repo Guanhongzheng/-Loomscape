@@ -54,6 +54,8 @@ import {
 import { activeEmbedder, type EmbedderInfo } from '@/lib/memory';
 import { persistentStorageGranted } from '@/lib/model-cache';
 import { useEndpoints } from '@/lib/endpoint-store';
+import { requestEmbeddingChange } from '@/lib/embedding-gate';
+import { embedderTagFor } from '@/lib/memory';
 import { hasKey, type Endpoint } from '@/lib/providers';
 import { probeEndpoint } from '@/lib/api';
 import { describeError } from '@/lib/errors';
@@ -345,14 +347,31 @@ export function EnginePanel() {
     }
 
     const mode = next as 'hash' | 'local' | 'api';
-    await patch({ embeddingMode: mode });
-    if (mode !== 'local') return;
-    const model = ALL_LOCAL_MODELS.find(
-      (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
-    );
-    if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend, precision)]) {
-      await activate(model);
-    }
+    const nextTag = embedderTagFor(mode, prefs.embeddingModelId, endpoints.embedding);
+    const label =
+      mode === 'hash'
+        ? '哈希回退'
+        : mode === 'api'
+          ? `云端 · ${endpoints.embedding.model}`
+          : findModel(prefs.embeddingModelId)?.label ?? '本地嵌入';
+    // Changing the embedder strands stored vectors, so the switch and the
+    // optional rebuild are decided together instead of silently breaking search.
+    await requestEmbeddingChange(label, nextTag, async () => {
+      await patch({ embeddingMode: mode });
+      if (mode !== 'local') return;
+      const model = ALL_LOCAL_MODELS.find(
+        (item) => item.task === 'embedding' && item.id === prefs.embeddingModelId,
+      );
+      if (model && !residents.some((row) => row.modelId === model.id) && cache[model.id]?.[dtypeFor(model, backend, precision)]) {
+        await activate(model);
+      }
+    });
+  };
+
+  /** Loading another local embedding model changes the tag too. */
+  const activateWithGuard = async (model: LocalModel) => {
+    if (model.task !== 'embedding') return activate(model);
+    await requestEmbeddingChange(model.label, `local:${model.id}`, () => activate(model));
   };
 
   const textModel = ALL_LOCAL_MODELS.find((item) => item.id === prefs.textModelId);
@@ -402,7 +421,7 @@ export function EnginePanel() {
     residents,
     backend,
     precision,
-    onActivate: activate,
+    onActivate: activateWithGuard,
     onUnload: (model: LocalModel) => unload(model.id, model.label),
     onDrop: drop,
     onClearAndRetry: clearAndRetry,

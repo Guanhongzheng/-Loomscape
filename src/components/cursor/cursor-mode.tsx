@@ -803,6 +803,9 @@ export function CursorMode() {
           cursor.classList.add('is-clicking');
           window.setTimeout(() => cursor.classList.remove('is-clicking'), 520);
         }
+        // The ripple is the only "ring" left: it marks exactly where the click
+        // landed, then disappears, instead of parking a circle over the tip.
+        pulse();
       }
       if (!menuOpenRef.current) return;
       if (menuRef.current?.contains(target as Node)) return;
@@ -811,7 +814,7 @@ export function CursorMode() {
     };
     window.addEventListener('pointerdown', onDown, true);
     return () => window.removeEventListener('pointerdown', onDown, true);
-  }, [closeMenu, enabled, finePointer]);
+  }, [closeMenu, enabled, finePointer, pulse]);
 
   // Keyboard fallback: shake is never the only way in or out.
   useEffect(() => {
@@ -930,19 +933,19 @@ export function CursorMode() {
           <svg className="cursor-mode-pointer__arrow" viewBox="0 0 24 24">
             <defs>
               <linearGradient id="cursor-copper-fill" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0" stopColor="rgb(205 195 232)" />
-                <stop offset="0.55" stopColor="rgb(185 175 216)" />
-                <stop offset="1" stopColor="rgb(151 139 184)" />
+                <stop offset="0" stopColor="rgb(138 123 181)" />
+                <stop offset="0.55" stopColor="rgb(116 103 151)" />
+                <stop offset="1" stopColor="rgb(74 63 102)" />
               </linearGradient>
             </defs>
             <path
               d={CURSOR_PATH}
               fill="url(#cursor-copper-fill)"
-              stroke="rgb(75 64 92 / 0.28)"
-              strokeWidth="0.55"
+              stroke="rgb(250 246 255 / 0.92)"
+              strokeWidth="1.05"
               strokeLinejoin="round"
             />
-            <path d="M4.5 4.8 8.7 17l1.8-4.3 4.2-1.1L4.5 4.8Z" fill="rgb(255 255 255 / 0.62)" />
+            <path d="M4.5 4.8 8.7 17l1.8-4.3 4.2-1.1L4.5 4.8Z" fill="rgb(255 255 255 / 0.35)" />
             <circle cx="3.7" cy="2.7" r="0.95" fill="rgb(250 247 255 / 0.94)" />
           </svg>
           <span className="cursor-mode-pointer__tag">AI</span>

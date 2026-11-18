@@ -163,7 +163,7 @@ export function StudioShell({
         <div className="px-4 pt-3">
           <Link
             href="/studio/create"
-            className="flex items-center justify-between rounded-xl border border-[rgb(var(--ink))]/10 bg-white/55 px-3.5 py-2.5 text-[12.5px] text-ink/85 transition-colors hover:bg-white"
+            className="flex items-center justify-between rounded-xl border border-[rgb(var(--copper)/0.55)] bg-[rgb(var(--copper)/0.34)] px-3.5 py-2.5 text-[12.5px] text-ink/90 transition-colors hover:bg-[rgb(var(--copper)/0.45)]"
           >
             <span>新建创作</span>
             <Plus size={14} strokeWidth={1.8} />
@@ -186,14 +186,14 @@ export function StudioShell({
                 className={cn(
                   'group relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-2 text-[13px] transition-colors duration-200',
                   active
-                    ? 'font-medium text-ink'
+                    ? 'font-medium text-white'
                     : 'text-muted hover:bg-[rgb(var(--ink))]/[0.07] hover:text-ink',
                 )}
               >
                 {active ? (
                   <motion.span
                     layoutId="rail-active"
-                    className="absolute inset-0 rounded-xl bg-white/75 ring-1 ring-[rgb(var(--accent))]/22 shadow-[0_8px_20px_-16px_rgba(61,54,72,0.45)] backdrop-blur-md"
+                    className="absolute inset-0 rounded-xl bg-[rgb(var(--accent))] shadow-[var(--shadow-accent)]"
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
                 ) : null}
@@ -473,13 +473,13 @@ export function StudioShell({
                 aria-current={active ? 'page' : undefined}
                 className={cn(
                   'group relative flex min-w-[64px] flex-1 shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-2 transition-[transform,color] duration-300 ease-weave hover:-translate-y-0.5',
-                  active ? 'font-medium text-[rgb(var(--accent))]' : 'text-muted hover:text-ink',
+                  active ? 'font-medium text-white' : 'text-muted hover:text-ink',
                 )}
               >
                 {active ? (
                   <motion.span
                     layoutId="dock-active"
-                    className="absolute inset-0 rounded-xl bg-white/80 ring-1 ring-[rgb(var(--accent))]/25 backdrop-blur-md"
+                    className="absolute inset-0 rounded-xl bg-[rgb(var(--accent))] shadow-[var(--shadow-accent)]"
                     transition={{ type: 'spring', stiffness: 420, damping: 34 }}
                   />
                 ) : null}
@@ -490,7 +490,7 @@ export function StudioShell({
                       strokeWidth={1.7}
                       className={cn(
                         'transition-transform duration-300 group-hover:-translate-y-0.5',
-                        active ? 'text-[rgb(var(--accent))]' : 'text-muted/80',
+                        active ? 'text-white' : 'text-muted/80',
                       )}
                     />
                     {item.href === '/studio/social' && unread > 0 ? (

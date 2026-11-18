@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 import { WeaveCanvas } from './weave-canvas';
 import { IntroBootSkeleton } from './boot-skeleton';
 import { AiCursor, AiCursorTrail } from './ai-cursor';
-import { SlideAbout, SlideCapabilities, SlideHero, SlideProcess } from './slides';
+import { SlideAbout, SlideCapabilities, SlideCover, SlideHero, SlideProcess } from './slides';
 import { AuthDialog } from './auth-dialog';
 import { preloadCursorGemma } from '@/lib/cursor/home-model';
 
@@ -22,6 +22,7 @@ const BOOT_MIN_MS = 900;
 const BOOT_MAX_MS = 2600;
 
 const SECTIONS = [
+  { id: 'cover', label: '首页' },
   { id: 'intro', label: '创作' },
   { id: 'capability', label: '对话' },
   { id: 'workflow', label: '底座' },
@@ -224,11 +225,11 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
     <>
       <main
         data-intro-index={index}
-        className="relative h-[100dvh] w-full overflow-hidden bg-[rgb(var(--paper))]"
+        className="relative h-[100dvh] w-full overflow-hidden bg-[#ece6f6]"
       >
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_18%_12%,rgba(255,255,255,0.9),transparent_58%),radial-gradient(90%_70%_at_88%_82%,rgba(176,122,74,0.07),transparent_62%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_18%_12%,rgba(255,255,255,0.72),transparent_58%),radial-gradient(90%_70%_at_88%_82%,rgba(156,140,196,0.22),transparent_62%)]" />
         <div aria-hidden="true" className="studio-aurora z-[1] opacity-80" />
-        <WeaveCanvas className="pointer-events-none absolute inset-0 z-0 opacity-90" />
+        <WeaveCanvas className="pointer-events-none absolute inset-0 z-0 opacity-100" />
 
         <header className="pointer-events-none absolute inset-x-0 top-0 z-40">
           <div
@@ -304,7 +305,10 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
           className="pager no-scrollbar relative z-10 flex h-[100dvh] w-full overflow-x-auto overflow-y-hidden"
         >
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideHero onEnter={requestEnter} onBrowse={() => goTo(1)} />
+            <SlideCover onEnter={requestEnter} onLearn={() => goTo(1)} />
+          </section>
+          <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
+            <SlideHero />
           </section>
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
             <SlideCapabilities />
@@ -313,7 +317,7 @@ export function IntroExperience({ onEnter }: { onEnter: () => void }) {
             <SlideProcess />
           </section>
           <section className="pager-slide relative h-full w-full shrink-0 overflow-y-auto pb-24 pt-24 md:overflow-hidden">
-            <SlideAbout onEnter={requestEnter} />
+            <SlideAbout />
           </section>
         </div>
 

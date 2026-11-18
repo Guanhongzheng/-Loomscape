@@ -21,7 +21,7 @@ import {
 import { backendLabel, scanModelCache, type CacheStats } from '@/lib/local-runtime';
 import { channelReady, needsVaultUnlock, useEndpoints } from '@/lib/endpoint-store';
 import { storageUsage, type StorageUsage } from '@/lib/storage';
-import { PROJECT_KINDS, summariseOverview } from '@/lib/overview';
+import { summariseOverview } from '@/lib/overview';
 
 type OverviewData = {
   projects: Project[];
@@ -102,7 +102,6 @@ export function StudioOverview() {
     ? new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
     : '';
   const storagePercent = Math.round(summary.storageRatio * 100);
-  const maxKind = Math.max(...PROJECT_KINDS.map((kind) => summary.kindCounts[kind]), 1);
   const pageTitle = `${greeting}${user ? `，${user.handle}` : ''}`;
   const setStudioTitle = useStudioTitle((state) => state.setTitle);
 
@@ -218,7 +217,7 @@ export function StudioOverview() {
                 {CREATE_TOOLS.map((tool) => (
                   <span
                     key={tool}
-                    className="rounded-full border border-white/55 bg-white/35 px-2.5 py-1 text-[10.5px] text-muted backdrop-blur-md"
+                    className="rounded-full border border-[rgb(var(--copper)/0.5)] bg-[rgb(var(--copper)/0.3)] px-2.5 py-1 text-[10.5px] text-ink/70 backdrop-blur-md"
                   >
                     {tool}
                   </span>
@@ -296,7 +295,10 @@ export function StudioOverview() {
               { value: summary.chatCount, label: '会话' },
               { value: data.memories, label: '记忆' },
             ].map((stat) => (
-              <div key={stat.label} className="rounded-lg border border-white/45 bg-white/25 px-2 py-2 text-center">
+              <div
+                key={stat.label}
+                className="rounded-lg border border-[rgb(var(--copper)/0.5)] bg-[rgb(var(--copper)/0.3)] px-2 py-2 text-center"
+              >
                 <div className="font-serif text-[20px] leading-none text-ink">{stat.value}</div>
                 <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.12em] text-muted/60">
                   {stat.label}
@@ -375,16 +377,19 @@ export function StudioOverview() {
           )}
         </section>
 
-        <aside className="space-y-4">
-          <section className="neu rounded-2xl p-5">
+        <aside className="flex h-full flex-col gap-4">
+          <section
+            data-recent-chats=""
+            className="flex flex-1 flex-col rounded-2xl border border-[rgb(var(--copper)/0.55)] bg-[rgb(var(--copper)/0.34)] p-5 shadow-[var(--shadow-neu-sm)] backdrop-blur-xl"
+          >
             <div className="flex items-baseline justify-between">
               <h2 className="font-serif text-[17px] text-ink">最近会话</h2>
-              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted/55">
+              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted/60">
                 {summary.chatCount} 个
               </span>
             </div>
             {summary.recentChats.length === 0 ? (
-              <p className="mt-3 text-[11.5px] leading-relaxed text-muted/75">
+              <p className="mt-3 text-[11.5px] leading-relaxed text-muted/80">
                 还没有保存的对话。在对话页发第一句话，它会出现在这里。
               </p>
             ) : (
@@ -393,7 +398,7 @@ export function StudioOverview() {
                   <li key={row.id} data-chat={row.id}>
                     <Link
                       href="/studio/chat"
-                      className="group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/25"
+                      className="group flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-white/55"
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12.5px] text-ink/90">{row.title}</span>
@@ -403,7 +408,7 @@ export function StudioOverview() {
                       </span>
                       <ArrowUpRight
                         size={12}
-                        className="shrink-0 text-muted/30 transition-colors group-hover:text-[rgb(var(--copper))]"
+                        className="shrink-0 text-muted/35 transition-colors group-hover:text-[rgb(var(--accent))]"
                       />
                     </Link>
                   </li>
@@ -412,48 +417,13 @@ export function StudioOverview() {
             )}
             <Link
               href="/studio/chat"
-              className="mt-3 inline-flex items-center gap-1 text-[11px] text-[rgb(var(--copper))] hover:underline"
+              className="mt-3 inline-flex items-center gap-1 text-[11px] text-[rgb(var(--accent))] hover:underline"
             >
               打开对话
               <ArrowUpRight size={11} />
             </Link>
           </section>
 
-          <section className="neu rounded-2xl p-5">
-            <div className="flex items-baseline justify-between">
-              <h2 className="font-serif text-[17px] text-ink">作品分布</h2>
-              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-muted/55">
-                by kind
-              </span>
-            </div>
-            {summary.projectCount === 0 ? (
-              <p className="mt-3 text-[11.5px] leading-relaxed text-muted/75">
-                保存作品后，这里会显示五种材料的比例。
-              </p>
-            ) : (
-              <div className="mt-4 space-y-2.5">
-                {PROJECT_KINDS.map((kind) => {
-                  const count = summary.kindCounts[kind];
-                  return (
-                    <div key={kind} className="flex items-center gap-2.5">
-                      <span className="w-9 shrink-0 text-[10.5px] text-muted/75">
-                        {KIND_LABEL[kind]}
-                      </span>
-                      <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-white/35">
-                        <div
-                          className="h-full rounded-full bg-[rgb(var(--accent))]/70"
-                          style={{ width: count > 0 ? `${Math.max((count / maxKind) * 100, 4)}%` : '0%' }}
-                        />
-                      </div>
-                      <span className="w-4 shrink-0 text-right font-mono text-[10px] text-muted/65">
-                        {count}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
         </aside>
       </div>
     </div>

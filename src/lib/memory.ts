@@ -33,6 +33,29 @@ export type MemoryRecord = {
 };
 
 const HASH_DIM = 192;
+
+/** Bumped when the tag format changes; see migrateEmbedderTags(). */
+export const EMBED_TAG_VERSION = 2;
+
+/** FNV-1a in base36: short, stable, no async crypto needed. */
+function shortHash(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/**
+ * Vectors from two providers that both call their model "text-embedding-v3"
+ * are not comparable. The tag carries the endpoint so switching providers is
+ * treated as switching spaces instead of silently mixing them.
+ */
+export function apiEmbedderTag(endpoint: { model: string; baseUrl: string }): string {
+  const base = endpoint.baseUrl.trim().replace(/\/+$/, '').toLowerCase();
+  return `api:${endpoint.model}@${shortHash(base)}`;
+}
 const CJK = /[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff]/;
 
 /**
@@ -123,12 +146,53 @@ export async function activeEmbedder(): Promise<EmbedderInfo> {
   if (prefs.embeddingMode === 'api') {
     const state = useEndpoints.getState();
     if (hasKey(state.endpoints.embedding) || state.health.embedding) {
-      return { tag: `api:${state.endpoints.embedding.model}`, label: state.endpoints.embedding.model };
+      return {
+        tag: apiEmbedderTag(state.endpoints.embedding),
+        label: state.endpoints.embedding.model,
+      };
     }
     return { tag: 'hash', label: '哈希（未配置嵌入端点）', dims: HASH_DIM };
   }
 
   return { tag: 'hash', label: '哈希', dims: HASH_DIM };
+}
+
+/**
+ * One-time silent migration: older rows were tagged `api:<model>` without the
+ * endpoint. Those vectors came from the currently configured endpoint, so the
+ * tag can simply be completed — no re-embedding, no cost. Rows from a different
+ * model are left alone; the switch gate handles those.
+ */
+export async function migrateEmbedderTags(): Promise<number> {
+  const version = await getPref<number>('embed.tagVersion', 1).catch(() => 1);
+  if (version >= EMBED_TAG_VERSION) return 0;
+
+  // The first visit may run before the stores hydrate; without prefs the mode
+  // reads as "hash" and the migration would silently skip.
+  if (!useEngines.getState().loaded) await useEngines.getState().load().catch(() => undefined);
+  if (!useEndpoints.getState().loaded) await useEndpoints.getState().load().catch(() => undefined);
+
+  const current = await activeEmbedder();
+  if (!current.tag.startsWith('api:')) return 0; // nothing to map onto yet
+  const currentModel = current.tag.slice(4).split('@')[0];
+
+  let rows: MemoryRecord[] = [];
+  try {
+    rows = await all<MemoryRecord>(STORES.memories);
+  } catch {
+    return 0;
+  }
+
+  let changed = 0;
+  for (const row of rows) {
+    if (!row.embedder.startsWith('api:') || row.embedder.includes('@')) continue;
+    if (row.embedder.slice(4) !== currentModel) continue;
+    await put(STORES.memories, { ...row, embedder: current.tag });
+    changed += 1;
+  }
+
+  await setPref('embed.tagVersion', EMBED_TAG_VERSION).catch(() => undefined);
+  return changed;
 }
 
 /** The tag a record gets when the chosen encoder could not produce vectors. */
@@ -283,6 +347,225 @@ export async function retrieve(
 
 export function recall(query: string, owner: string, topK = 4): Promise<RecallHit[]> {
   return retrieve(query, owner, { topK });
+}
+
+/* ------------------------------------------------------------------ */
+/* Reindexing: switching the embedder strands every stored vector, so the */
+/* library needs to be re-embedded. Chunk text is persisted, which is what */
+/* makes this possible without asking the user to paste anything again.    */
+/* ------------------------------------------------------------------ */
+
+/** Tag the active embedder would get for a prospective configuration. */
+export function embedderTagFor(
+  mode: 'api' | 'local' | 'hash',
+  localModelId: string,
+  endpoint: { model: string; apiKey: string; baseUrl: string } | undefined,
+): string {
+  if (mode === 'api' && endpoint && endpoint.apiKey.trim().length > 8 && endpoint.baseUrl.trim()) {
+    return apiEmbedderTag(endpoint);
+  }
+  if (mode === 'local') return `local:${localModelId}`;
+  return 'hash';
+}
+
+/** Rough token count: CJK ~1 token per char, latin ~1 per 3.2 chars. */
+export function approximateTokens(text: string): number {
+  let cjk = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if ((code >= 0x3040 && code <= 0x30ff) || (code >= 0x3400 && code <= 0x9fff)) cjk += 1;
+  }
+  const rest = Math.max(0, text.length - cjk);
+  return Math.ceil(cjk + rest / 3.2);
+}
+
+export type ReindexEstimate = {
+  targetTag: string;
+  targetLabel: string;
+  docs: number;
+  chunks: number;
+  chars: number;
+  tokens: number;
+};
+
+/**
+ * What a reindex would touch: only rows whose tag differs from the target.
+ * Pure local read, no network and no model call.
+ */
+export async function estimateReindex(owner: string, targetTag?: string): Promise<ReindexEstimate> {
+  const embedder = await activeEmbedder();
+  const tag = targetTag ?? embedder.tag;
+  let rows: MemoryRecord[] = [];
+  try {
+    rows = await all<MemoryRecord>(STORES.memories);
+  } catch {
+    rows = [];
+  }
+  const pending = rows.filter(
+    (row) => row.owner === owner && row.source && row.embedder !== tag,
+  );
+  const docs = new Set(pending.map((row) => row.source!.docId));
+  const chars = pending.reduce((sum, row) => sum + row.text.length, 0);
+  const tokens = pending.reduce((sum, row) => sum + approximateTokens(row.text), 0);
+  return {
+    targetTag: tag,
+    targetLabel: tag === embedder.tag ? embedder.label : tag.replace(/^(api|local):/, ''),
+    docs: docs.size,
+    chunks: pending.length,
+    chars,
+    tokens,
+  };
+}
+
+export type IndexHealth = {
+  tag: string;
+  label: string;
+  totalDocs: number;
+  pendingDocs: number;
+  pendingChunks: number;
+  pendingChars: number;
+};
+
+/**
+ * "Is the library searchable right now?" — the knowledge panel shows this so a
+ * stale index is visible instead of discovered when a citation goes missing.
+ */
+export async function indexHealth(owner: string): Promise<IndexHealth> {
+  const embedder = await activeEmbedder();
+  const [docs, estimate] = await Promise.all([
+    listDocuments(owner).catch(() => []),
+    estimateReindex(owner, embedder.tag).catch(() => null),
+  ]);
+  return {
+    tag: embedder.tag,
+    label: embedder.label,
+    totalDocs: docs.length,
+    pendingDocs: estimate?.docs ?? 0,
+    pendingChunks: estimate?.chunks ?? 0,
+    pendingChars: estimate?.chars ?? 0,
+  };
+}
+
+export type ReindexProgress = {
+  totalDocs: number;
+  totalChunks: number;
+  doneDocs: number;
+  doneChunks: number;
+  failedDocs: number;
+};
+
+export type ReindexResult = ReindexProgress & { cancelled: boolean };
+
+const REINDEX_BATCH = 16;
+const REINDEX_RETRIES = 3;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Re-embeds documents whose tag differs from the active embedder.
+ *
+ * Per document: compute every chunk vector first, then write in one go, so a
+ * failure or cancel can never leave a document half in the new space. Old
+ * vectors are only overwritten after the new ones exist, and the text itself
+ * is never touched — the worst case is "temporarily unsearchable", not data
+ * loss.
+ */
+export async function reindexDocuments(
+  owner: string,
+  options: {
+    onProgress?: (progress: ReindexProgress) => void;
+    shouldCancel?: () => boolean;
+    batchSize?: number;
+  } = {},
+): Promise<ReindexResult> {
+  const embedder = await activeEmbedder();
+  const batchSize = options.batchSize ?? REINDEX_BATCH;
+
+  let rows: MemoryRecord[] = [];
+  try {
+    rows = await all<MemoryRecord>(STORES.memories);
+  } catch {
+    rows = [];
+  }
+
+  const pending = rows.filter(
+    (row) => row.owner === owner && row.source && row.embedder !== embedder.tag,
+  );
+  const byDoc = new Map<string, MemoryRecord[]>();
+  for (const row of pending) {
+    const key = row.source!.docId;
+    const list = byDoc.get(key) ?? [];
+    list.push(row);
+    byDoc.set(key, list);
+  }
+  for (const list of byDoc.values()) list.sort((a, b) => (a.source!.chunk ?? 0) - (b.source!.chunk ?? 0));
+
+  const progress: ReindexProgress = {
+    totalDocs: byDoc.size,
+    totalChunks: pending.length,
+    doneDocs: 0,
+    doneChunks: 0,
+    failedDocs: 0,
+  };
+  const report = () => options.onProgress?.({ ...progress });
+  report();
+
+  let cancelled = false;
+
+  for (const chunks of byDoc.values()) {
+    if (options.shouldCancel?.()) {
+      cancelled = true;
+      break;
+    }
+    // A second switch mid-run would mix two spaces under one tag.
+    const current = await activeEmbedder();
+    if (current.tag !== embedder.tag) {
+      cancelled = true;
+      break;
+    }
+
+    let aborted = false;
+    const vectors: number[][] = [];
+    try {
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        if (options.shouldCancel?.()) {
+          aborted = true;
+          cancelled = true;
+          break;
+        }
+        const slice = chunks.slice(i, i + batchSize);
+        let attempt = 0;
+        let batch: number[][] | null = null;
+        while (!batch) {
+          try {
+            batch = await vectorize(slice.map((row) => row.text), embedder);
+          } catch (error) {
+            attempt += 1;
+            if (attempt >= REINDEX_RETRIES) throw error;
+            await wait(600 * 2 ** (attempt - 1));
+          }
+        }
+        vectors.push(...batch);
+        progress.doneChunks += slice.length;
+        report();
+        await wait(0);
+      }
+    } catch {
+      progress.failedDocs += 1;
+      report();
+      continue;
+    }
+
+    if (aborted || vectors.length !== chunks.length) continue;
+
+    for (let i = 0; i < chunks.length; i += 1) {
+      await put(STORES.memories, { ...chunks[i], vector: vectors[i], embedder: embedder.tag });
+    }
+    progress.doneDocs += 1;
+    report();
+  }
+
+  return { ...progress, cancelled };
 }
 
 export type DocumentSummary = {

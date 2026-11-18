@@ -1,7 +1,20 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { STORES, clear, resetConnection } from '@/lib/db';
-import { remember, retrieve, setMemoryPrefs } from '@/lib/memory';
+import { STORES, all, clear, put, resetConnection, setPref } from '@/lib/db';
+import { DEFAULT_ENGINE_PREFS, useEngines } from '@/lib/engines';
+import { useEndpoints } from '@/lib/endpoint-store';
+import { EMPTY_ENDPOINTS } from '@/lib/providers';
+import {
+  approximateTokens,
+  apiEmbedderTag,
+  embedderTagFor,
+  indexHealth,
+  migrateEmbedderTags,
+  remember,
+  retrieve,
+  setMemoryPrefs,
+  type MemoryRecord,
+} from '@/lib/memory';
 
 describe('retrieve scope', () => {
   beforeEach(async () => {
@@ -59,5 +72,98 @@ describe('retrieve scope', () => {
     await remember({ owner: 'usr_1', kind: 'doc', text: '夜里的旧书店十点开门。' });
     const hits = await retrieve('旧书店开门时间', 'usr_2', { topK: 4 });
     expect(hits).toEqual([]);
+  });
+});
+
+describe('reindex helpers', () => {
+  it('counts CJK as one token per char and latin at a quarter', () => {
+    expect(approximateTokens('城市夜晚')).toBe(4);
+    expect(approximateTokens('city')).toBe(2);
+    expect(approximateTokens('')).toBe(0);
+  });
+
+  it('tags every embedder source distinctly', () => {
+    const endpoint = { model: 'text-embedding-v3', apiKey: 'sk-1234567890', baseUrl: 'https://x/v1' };
+    expect(embedderTagFor('api', 'bge', endpoint)).toBe(apiEmbedderTag(endpoint));
+    expect(embedderTagFor('api', 'bge', { ...endpoint, apiKey: '' })).toBe('hash');
+    expect(embedderTagFor('local', 'bge-base-zh', endpoint)).toBe('local:bge-base-zh');
+    expect(embedderTagFor('hash', 'bge-base-zh', endpoint)).toBe('hash');
+  });
+});
+
+describe('embedder tag migration', () => {
+  beforeEach(async () => {
+    resetConnection();
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase('loomscape');
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+    });
+    resetConnection();
+    await setPref('embed.tagVersion', 1);
+    useEngines.setState({ loaded: true, prefs: { ...DEFAULT_ENGINE_PREFS, embeddingMode: 'api' } });
+    useEndpoints.setState({
+      loaded: true,
+      endpoints: {
+        ...EMPTY_ENDPOINTS,
+        embedding: {
+          ...EMPTY_ENDPOINTS.embedding,
+          baseUrl: 'https://api.example.com/v1',
+          apiKey: 'sk-test-123456',
+          model: 'text-embedding-v3',
+        },
+      },
+      health: { text: false, image: false, speech: false, embedding: false },
+    });
+  });
+
+  it('completes a legacy tag without touching the vector or text', async () => {
+    await put(STORES.memories, {
+      id: 'row-1',
+      owner: 'usr_1',
+      kind: 'doc',
+      text: '旧的资料',
+      vector: [0.1, 0.2],
+      embedder: 'api:text-embedding-v3',
+      tags: [],
+      createdAt: 1,
+      source: { docId: 'doc-1', docTitle: '资料', chunk: 0, total: 1 },
+    });
+
+    expect(await migrateEmbedderTags()).toBe(1);
+
+    const rows = await all<MemoryRecord>(STORES.memories);
+    expect(rows[0].embedder).toBe(
+      apiEmbedderTag({ model: 'text-embedding-v3', baseUrl: 'https://api.example.com/v1' }),
+    );
+    expect(rows[0].vector).toEqual([0.1, 0.2]);
+    expect(rows[0].text).toBe('旧的资料');
+    expect(await migrateEmbedderTags()).toBe(0);
+  });
+
+  it('reports documents whose vectors belong to another space', async () => {
+    await put(STORES.memories, {
+      id: 'row-2',
+      owner: 'usr_1',
+      kind: 'doc',
+      text: '另一批资料',
+      vector: [0.3],
+      embedder: 'api:text-embedding-v3@other',
+      tags: [],
+      createdAt: 2,
+      source: { docId: 'doc-2', docTitle: '资料二', chunk: 0, total: 1 },
+    });
+
+    const health = await indexHealth('usr_1');
+    expect(health.totalDocs).toBe(1);
+    expect(health.pendingDocs).toBe(1);
+    expect(health.pendingChunks).toBe(1);
+  });
+
+  it('keeps two providers with the same model name apart', () => {
+    const a = apiEmbedderTag({ model: 'm', baseUrl: 'https://a.example.com/v1' });
+    const b = apiEmbedderTag({ model: 'm', baseUrl: 'https://b.example.com/v1' });
+    expect(a).not.toBe(b);
+    expect(apiEmbedderTag({ model: 'm', baseUrl: 'https://A.example.com/v1/' })).toBe(a);
   });
 });

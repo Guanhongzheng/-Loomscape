@@ -12,6 +12,7 @@ import { channelReady, useEndpoints } from '@/lib/endpoint-store';
 import { requestImages } from '@/lib/api';
 import { renderOfflineArtwork } from '@/lib/demo';
 import { compress, downloadDataUrl } from '@/lib/image-utils';
+import { callCount, imagesPerCall, MAX_IMAGES } from '@/lib/image-limits';
 import { listProjects, relativeTime, saveProject, type Project } from '@/lib/projects';
 
 type Aspect = '1:1' | '4:3' | '3:4' | '16:9';
@@ -59,6 +60,10 @@ export default function ImageWorkbench() {
   const [busy, setBusy] = useState(false);
   const [archive, setArchive] = useState<Project[]>([]);
 
+  // CogView and Stability return one image per request, so "4 张" is four calls.
+  const perCall = imagesPerCall(endpoints.image);
+  const calls = callCount(endpoints.image, Number(count));
+
   useEffect(() => {
     if (!user) return;
     listProjects(user.id, 'image')
@@ -77,11 +82,12 @@ export default function ImageWorkbench() {
     setBusy(true);
     try {
       if (live) {
+        const wanted = Number(count);
         const images = await requestImages({
           endpoint: endpoints.image,
           prompt: brief,
           size: API_SIZE[aspect],
-          count: Number(count),
+          count: wanted,
         });
         setShots(
           images.map((image, index) => ({
@@ -91,6 +97,11 @@ export default function ImageWorkbench() {
             prompt: brief,
           })),
         );
+        // The route loops for single-image models, so a shortfall means the
+        // upstream really did refuse — say it instead of leaving a gap.
+        if (images.length < wanted) {
+          toast(`上游只返回 ${images.length} 张`, 'error');
+        }
       } else {
         const [width, height] = LOCAL_SIZE[aspect];
         const total = Number(count);
@@ -187,7 +198,9 @@ export default function ImageWorkbench() {
 
             <p className="mt-3 text-[11px] leading-relaxed text-muted/70">
               {live
-                ? `使用 ${endpoints.image.model}，单次最多 4 张。`
+                ? perCall < MAX_IMAGES
+                  ? `${endpoints.image.model} 每次只出 ${perCall} 张：选 ${count} 张会调用 ${calls} 次，按 ${calls} 次计费。`
+                  : `使用 ${endpoints.image.model}，单次最多 ${MAX_IMAGES} 张。`
                 : '未配置图像端点：画布由本地程序化生成，适合先定构图与色调。'}
             </p>
           </Panel>

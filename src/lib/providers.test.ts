@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cosine, hashEmbed } from '@/lib/memory';
-import { EMPTY_ENDPOINTS, PRESETS, hasKey, presetFor } from '@/lib/providers';
+import { EMPTY_ENDPOINTS, PRESETS, hasKey, looksVisionCapable, presetFor } from '@/lib/providers';
 import { assertPublicUrl, trimBase } from '@/lib/server/upstream';
 
 describe('hashEmbed', () => {
@@ -54,6 +54,19 @@ describe('provider presets', () => {
     expect(shape('zhipu')).toBe('openai-chat');
     expect(shape('anthropic')).toBe('anthropic-chat');
     expect(shape('google')).toBe('google-chat');
+  });
+
+  it('offers mainstream providers on every auxiliary channel', () => {
+    for (const channel of ['embedding', 'image', 'speech'] as const) {
+      const presets = PRESETS[channel];
+      expect(presets.length, channel).toBeGreaterThanOrEqual(4);
+      expect(presets.some((preset) => preset.id.startsWith('custom')), channel).toBe(true);
+      for (const preset of presets) {
+        if (preset.id.startsWith('custom')) continue;
+        expect(preset.baseUrl, preset.id).toMatch(/^https:\/\//);
+        expect(preset.models.length, preset.id).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('gives every preset but the custom slot a base url and a model', () => {
@@ -120,5 +133,18 @@ describe('trimBase', () => {
   it('removes trailing slashes only', () => {
     expect(trimBase('https://api.test/v1///')).toBe('https://api.test/v1');
     expect(trimBase('https://api.test/v1')).toBe('https://api.test/v1');
+  });
+});
+
+describe('vision capability hint', () => {
+  it('recognises the obvious multimodal families', () => {
+    expect(looksVisionCapable('gpt-4o')).toBe(true);
+    expect(looksVisionCapable('qwen-vl-max')).toBe(true);
+    expect(looksVisionCapable('glm-4v-plus')).toBe(true);
+  });
+
+  it('does not claim a text-only model can see', () => {
+    expect(looksVisionCapable('deepseek-chat')).toBe(false);
+    expect(looksVisionCapable('gpt-4o-mini-tts')).toBe(false);
   });
 });
